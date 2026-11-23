@@ -220,8 +220,8 @@ PLISTEOF
   ;;
 Linux) ;;
 *)
-  echo "unsupported platform $OS"
-  echo "install a 5-minute cron entry for: $PYTHON $TOOL sweep"
+  echo "Not installing: $OS is not supported. The kit runs on macOS and Linux only"
+  echo "(it needs fcntl, a pty, ps and a launchd or systemd scheduler); Windows is not supported."
   exit 1
   ;;
 esac
@@ -238,6 +238,7 @@ mv "$TOOL.new" "$TOOL"
 {
   printf '%s' "$RC_DIRS" | sed 's/^/rc_dir=/'
   printf 'label=%s\n' "$LABEL"
+  printf 'src=%s\n' "$SRC_DIR"            # the weekly check-up upgrades from here
 } > "$CONF.new"
 mv "$CONF.new" "$CONF"
 echo "wrote $CONF"
@@ -360,42 +361,17 @@ OnUnitActiveSec=5min
 WantedBy=timers.target
 UNITEOF
   echo "wrote $UNITS/$LABEL.{service,timer}"
-  # Weekly maintenance. A Mac runs it from a Claude desktop-app scheduled task;
-  # Linux has no desktop app, so a second timer runs it, 10 min after the
-  # weekly reset as known at this install (re-run install.sh if the reset
-  # moves). Persistent= catches up a run missed while the machine was off.
-  read -r M_MIN M_HOUR _ _ M_DOW <<CRONEOF
-$("$PYTHON" "$TOOL" task-spec 2>/dev/null | "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["cronExpression"])' 2>/dev/null)
-CRONEOF
-  [ -n "${M_DOW:-}" ] || { M_MIN=10; M_HOUR=13; M_DOW=4; }
-  M_DAY=$(echo "Sun Mon Tue Wed Thu Fri Sat" | cut -d' ' -f$((M_DOW + 1)))
-  cat > "$UNITS/$LABEL-maintenance.service" <<UNITEOF
-[Unit]
-Description=Weekly maintenance for the Claude auto-resume kit
-
-[Service]
-Type=oneshot
-Environment="PATH=$(sd_escape "$AGENT_PATH")"
-ExecStart="$(sd_escape "$PYTHON")" "$(sd_escape "$TOOL")" maintain --scheduled
-UNITEOF
-  cat > "$UNITS/$LABEL-maintenance.timer" <<UNITEOF
-[Unit]
-Description=Claude auto-resume weekly maintenance
-
-[Timer]
-OnCalendar=$M_DAY *-*-* $(printf '%02d:%02d:00' "$M_HOUR" "$M_MIN")
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-UNITEOF
-  echo "wrote $UNITS/$LABEL-maintenance.{service,timer} ($M_DAY $(printf '%02d:%02d' "$M_HOUR" "$M_MIN"))"
+  # 2026-11-23.2 ran the weekly maintenance from a timer here; the Claude
+  # scheduled task does it now (see the end of this script).
+  if [ -f "$UNITS/$LABEL-maintenance.timer" ]; then
+    systemctl --user disable --now "$LABEL-maintenance.timer" 2>/dev/null || true
+    rm -f "$UNITS/$LABEL-maintenance.service" "$UNITS/$LABEL-maintenance.timer"
+    echo "removed $LABEL-maintenance.{service,timer} (the Claude scheduled task replaces it)"
+  fi
   if [ "$START" = 1 ]; then
     systemctl --user daemon-reload
     systemctl --user enable --now "$LABEL.timer"
     echo "enabled $LABEL.timer"
-    systemctl --user enable --now "$LABEL-maintenance.timer"
-    echo "enabled $LABEL-maintenance.timer"
     # Without lingering, user units stop at logout: the watchdog would die with
     # your SSH session and never run at boot.
     if ! loginctl show-user "$(id -un)" 2>/dev/null | grep -q "Linger=yes"; then
@@ -452,19 +428,21 @@ EOF
   fi
 fi
 
-# Every week after that, on a Mac, it is run by a Claude scheduled task (the
-# desktop app's own scheduler), 10 min after this account's weekly reset. Only
-# Claude can create one, so write its spec where a Claude session can pick it
-# up. Linux has no desktop app: its maintenance timer above does the same.
-if [ "$OS" = "Darwin" ]; then
-  SPEC="$TOOLS/weekly-maintenance-task.json"
-  "$PYTHON" "$TOOL" task-spec > "$SPEC"
-  echo
-  echo "LAST STEP - in the Claude desktop app on this machine, ask Claude:"
-  echo "  Create (or update) the Claude scheduled task described in $SPEC"
-  echo "  with mcp__scheduled-tasks__create_scheduled_task, using its taskId, title,"
-  echo "  description, cronExpression and prompt exactly, then run it once."
-fi
+# Every week after that it is run by a Claude scheduled task: a Claude Code
+# scheduled task that starts a fresh session on this machine through its
+# Remote Control server, or the desktop app's scheduler. Only Claude can create
+# one, so print the prompt that does it, for a human to paste into Claude Code.
+SETUP="$TOOLS/weekly-check-setup.txt"
+"$PYTHON" "$TOOL" task-setup > "$SETUP"
+rm -f "$TOOLS/weekly-maintenance-task.json"     # before 2026-11-23.3
+echo
+echo "LAST STEP - set up the weekly check-up (a Claude agent that runs maintenance,"
+echo "checks health and makes safe repairs). Open a Claude Code session ON THIS"
+echo "MACHINE - through Remote Control (the Claude app or claude.ai/code) or the"
+echo "Claude desktop app - and paste everything between the lines (also in $SETUP):"
+echo "================================================================================"
+cat "$SETUP"
+echo "================================================================================"
 
 echo
 echo "next:"

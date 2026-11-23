@@ -3,22 +3,40 @@
 For a machine already running an earlier version of this kit. New installs
 should follow [[INSTALL]] instead — it does all of this.
 
-## Current version: 2026-11-23.2
+## Current version: 2026-11-23.3
 
 `limit-resume.py doctor` prints the version on its second line. A machine whose
 `doctor` has no `version` line is running a build older than this one.
 
 | file | sha256 (first 12) |
 |---|---|
-| `limit-resume.py` | `79a091660015` |
+| `limit-resume.py` | `1f200f74bbc3` |
 | `claude-rc.command.in` | `a0ca0788fe92` |
-| `install.sh` | `3d92fd9bfd86` |
-| `uninstall.sh` | `9c5f430539be` |
-| `tests/test_limit_resume.py` | `41f26c669ca9` |
+| `install.sh` | `c40ec630aef1` |
+| `uninstall.sh` | `069d57d0bac3` |
+| `tests/test_limit_resume.py` | `8f71eda40ff4` |
 
 ```bash
 shasum -a 256 limit-resume.py ~/.claude/tools/limit-resume.py | cut -c1-12,65-
 ```
+
+## 2026-11-23.3: weekly check-up by a Claude agent; Windows refused
+
+Re-run `install.sh` once, then paste the prompt it prints at the end into a
+Claude Code session on that machine (through Remote Control or the desktop
+app). On Linux the install also removes 2026-11-23.2's maintenance timer.
+A Mac that already has the desktop-app task: paste the prompt anyway; it
+updates the task to the new check-up prompt.
+
+| change | why it matters |
+|---|---|
+| The weekly task is now an agent check-up (`TASK_PROMPT`): `maintain --scheduled`, `doctor` and the logs, safe repairs (kickstart the scheduler, `rc on` for a tripped breaker on macOS, upgrade from the `src=` checkout once its tests pass), schedule kept in step, a 10-line report, `notify` when something is left | Someone looks at the system every week and fixes what is safe to fix. It never commits, pushes, deletes, edits the kit or job notes, flips auto/jobs/watch, or uses `--force`. |
+| `limit-resume.py task-setup`: the paste-in prompt that creates the task, with a Claude Code scheduled task (`create_trigger`, fresh session per run on this machine, `CRON_TZ`) or the desktop app's scheduler; install.sh prints it on every OS and saves it as `weekly-check-setup.txt` | One way to set it up on macOS and Linux; the human only pastes. Replaces `weekly-maintenance-task.json`. |
+| `task-spec` adds `timezone` and `cron` (`CRON_TZ=<zone> <cron>`) | A Claude Code scheduled task reads cron in UTC unless told the zone. |
+| `install.conf` records `src=<kit folder>` | The check-up knows where to upgrade from. |
+| Linux: 2026-11-23.2's `<label>-maintenance.timer` removed by install.sh | One weekly maintainer: the Claude task. `rc on` still refuses on Linux. |
+| Windows (Git Bash, MSYS, Cygwin): install.sh refuses with "Windows is not supported"; INSTALL.md has a support table and an "Install with Claude Code" prompt | No half-working install on Windows; another Claude can install the kit from the docs alone. |
+| Test 7 no longer finds the real `claude` through `CLAUDE_PATH_HINT`; tests 51b/51c and J11 checks for `task-spec`/`task-setup` | The suite now exits 0 on a machine with `claude` in `~/.local/bin`, which the check-up's upgrade step relies on. 964 checks. |
 
 ## 2026-11-23.2: Linux - no Remote Control watch, maintenance by timer
 

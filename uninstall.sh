@@ -100,7 +100,8 @@ Linux)
 esac
 
 echo "Running Remote Control servers are left running; close their Terminal windows to stop them."
-echo "In the Claude desktop app, ask Claude to delete the scheduled task auto-resume-weekly-maintenance."
+echo "Delete the weekly Claude scheduled task too: ask Claude (in Claude Code or the desktop app) to"
+echo "delete the scheduled task \"Auto-resume weekly maintenance\" (id auto-resume-weekly-maintenance in the app)."
 
 if [ "$PURGE" = 1 ]; then
   rm -f "$TOOL" "$TOOLS/limit-resume.state.json" "$TOOLS/limit-resume.state.json.lock" \
@@ -109,7 +110,7 @@ if [ "$PURGE" = 1 ]; then
         "$TOOLS/limit-resume.out.log" "$TOOLS/limit-resume.err.log" \
         "$TOOLS/limit-resume.out.log.1" "$TOOLS/limit-resume.err.log.1" \
         "$TOOLS/limit-resume.usage.json" "$TOOLS/rc-last-exit" "$TOOLS/claude-rc.command" \
-        "$CONF" "$TOOLS/sweep-stale" "$TOOLS/weekly-maintenance-task.json" \
+        "$CONF" "$TOOLS/sweep-stale" "$TOOLS/weekly-maintenance-task.json" "$TOOLS/weekly-check-setup.txt" \
         "$TOOLS/job-settings.json" "$TOOLS/usage.json" "$TOOLS/usage.json.lock" \
         "$TOOLS"/claude-rc-*.command "$TOOLS"/rc-last-exit-* "$TOOLS/rc-deadman.lock"
   rm -rf "$TOOLS/rc-launch.lock" "$TOOLS"/rc-launch-*.lock "$TOOLS/jobs" "$TOOLS/rc-debug" \

@@ -17,6 +17,10 @@ by itself, the moment the quota resets, and costs **nothing** while it waits.
 Built 2026-09-20. Lives in `~/.claude/tools/limit-resume.py`, run by the
 LaunchAgent `com.suvichak.claude-limit-resume`.
 
+Runs on **macOS** (everything) and **Linux** (no Remote Control watchdog).
+**Windows is not supported.** To install, follow [INSTALL.md](INSTALL.md), or
+paste its "Install with Claude Code" prompt into Claude Code on the machine.
+
 ```
 Claude session hits quota
         │
@@ -293,21 +297,23 @@ overwritten: within one window the higher figure is kept (usage only grows),
 a figure from an earlier window (an idle session re-rendering an old reply)
 is ignored, under an flock with a temp file per writer.
 
-## Weekly maintenance: a Claude scheduled task (2026-11-18)
+## Weekly maintenance: a Claude agent check-up (2026-11-23)
 
-The weekly maintenance is a **Claude scheduled task** (the desktop app's own
-scheduler), `auto-resume-weekly-maintenance`, set for 10 minutes after
-**this account's** weekly reset. It is not part of the 5-minute sweep.
-A Claude session reads the account's usage the way the app's usage card does
-(`get_usage` → `plan`), so the reset date comes straight from Claude: no probe,
-and no CLI login. On 2026-11-18 that showed this account's weekly window at
-86%, resetting Thu 19 Nov 13:00 (+07), so the task runs `10 13 * * 4`.
+The weekly maintenance is a **Claude scheduled task**, "Auto-resume weekly
+maintenance", set for 10 minutes after **this account's** weekly reset. It is
+not part of the 5-minute sweep, and it is an agent, not a script: each week a
+fresh Claude session on this machine runs the check-up in `TASK_PROMPT`.
 
-Each run (its prompt is `TASK_PROMPT`; `limit-resume.py task-spec` prints the
-whole task as JSON):
+Where it runs: a **Claude Code scheduled task** (`create_trigger`, new session
+per run) in this machine's Remote Control environment, so the session runs on
+this machine (macOS and Linux); or the Claude desktop app's own scheduler.
+Either way it only fires while that server or app is up.
 
-1. Reads `get_usage` and pipes the `plan` object into
-   `limit-resume.py maintain --scheduled --usage-json -`, which:
+Each run:
+
+1. **Maintenance.** Pipes the app's usage (`get_usage` → `plan`) into
+   `maintain --scheduled --usage-json -`, or runs `maintain --scheduled`
+   (one Haiku probe) where that tool is missing. `maintain`:
    - **records the weekly reset** and flags a move to another day (`MOVED`, plus
      the "Weekly reset moved" alert). The caps and the job gate use it from then on.
    - **tidies the auto-resume state:** drops sessions whose transcript is gone
@@ -317,23 +323,24 @@ whole task as JSON):
    - **rotates** `limit-resume.log` past 5 MB.
    - **sends one summary line**, logged and alerted:
      `Weekly maintenance (scheduled): weekly reset Thu 26 Nov 13:00; weekly 3% used; jobs: 4 done this week, 2 queued`.
-2. Runs `task-spec` and, if the cron it gives differs from the task's
-   own, calls `update_scheduled_task`. **The task moves itself** when a
-   reset from Claude moves the day.
+2. **Check.** `doctor`, and the last 200 lines of the log and the error log.
+3. **Safe repairs** for what it found: kickstart a stale scheduler, `rc on`
+   for a tripped Remote Control breaker (macOS), and an upgrade from the
+   `src=` checkout in `install.conf` (`pull --ff-only`, tests must pass, then
+   `install.sh`). Never commits, pushes, deletes, edits the kit or job notes,
+   switches auto mode / jobs / the watch, or uses `--force`.
+4. **Moves itself** to `task-spec`'s schedule when a reset from Claude moved the day.
+5. **Reports** in up to 10 lines, and alerts (`notify`) when something is left for you.
 
-If the app can't give usage, `maintain` falls back to one Haiku probe. If that
-fails too, the summary says so and the last known reset is kept.
-
-**Installing it.** A shell script can't create a desktop scheduled task, so
-`install.sh` runs the first maintenance itself (`maintain --install`), writes
-the task to `~/.claude/tools/weekly-maintenance-task.json`, and ends by
-asking for one step in the Claude desktop app: create the task from that file
-with `mcp__scheduled-tasks__create_scheduled_task` and run it once. Scheduled
-tasks run while the app is open; a run missed while it was closed happens at
-the next launch. `doctor` reports the last maintenance run and the last run of
-the scheduled task itself, and says `STALE` once the scheduled task has not run
+**Installing it.** A shell script can't create a Claude scheduled task, so
+`install.sh` runs the first maintenance itself (`maintain --install`) and ends
+by printing a paste-in prompt (`limit-resume.py task-setup`, saved as
+`~/.claude/tools/weekly-check-setup.txt`). The human pastes it into a Claude
+Code session on that machine, and that Claude creates the task and runs it
+once. `doctor` reports the last maintenance run and the last run of the
+scheduled task itself, and says `STALE` once the scheduled task has not run
 for 8 days (counted from the first maintenance until it has run once): install
-runs no longer hide a task that never fires.
+runs do not hide a task that never fires.
 
 ## Why not do the waiting inside Claude
 

@@ -22,6 +22,7 @@ is the `claude --resume` call itself, once the limit has actually reset.
   limit-resume.py maintain [--install|--scheduled] [--usage-json <json>|-]
                                                     weekly maintenance (reset date, tidy)
   limit-resume.py task-spec                         the Claude scheduled task that runs it
+  limit-resume.py task-setup                        the prompt that creates it, to paste into Claude Code
 
 In auto mode any session whose transcript ends on an unresolved quota 429 (the
 5-hour or the weekly window) is eligible, subject to AUTO_MAX_AGE_H counted from
@@ -50,10 +51,10 @@ import urllib.parse
 import urllib.request
 import uuid as uuidlib
 
-VERSION = "2026-11-23.2"
+VERSION = "2026-11-23.3"
 
-# The Remote Control watchdog reopens its launcher with macOS `open` (Terminal)
-# and the weekly maintenance runs from the Claude desktop app; Linux has neither.
+# The Remote Control watchdog reopens its launcher with macOS `open` (Terminal);
+# Linux has no Terminal app to hand it to.
 IS_MAC = sys.platform == "darwin"
 
 HOME = os.path.expanduser("~")
@@ -3946,13 +3947,17 @@ def cmd_git_check(argv):
 # ---------------------------------------------------------------------------
 # Weekly maintenance
 #
-# Run by a Claude scheduled task (the desktop app's own scheduler), installed
-# with the kit: `auto-resume-weekly-maintenance`, MAINT_AFTER_RESET after the
-# account's weekly reset. Each run reads the plan usage from the app (the same
-# figures as its usage card: no probe, no CLI login needed), passes them to
-# `maintain --usage-json -`, which records the weekly reset, tidies the
-# auto-resume and job-queue state and sends a weekly summary, and then moves
-# the task to `task-spec`'s schedule when a reset from Claude moved the day.
+# Run by a weekly Claude scheduled task, `Auto-resume weekly maintenance`,
+# MAINT_AFTER_RESET after the account's weekly reset: a Claude Code scheduled
+# task that starts a fresh session on this machine through its Remote Control
+# server (macOS and Linux), or the Claude desktop app's own scheduler. A shell
+# script cannot create either, so install.sh ends by printing `task-setup`: a
+# prompt the human pastes into a Claude Code session on this machine, which
+# creates the task. Each run is an agent check-up (TASK_PROMPT): `maintain
+# --scheduled` (records the weekly reset, tidies the auto-resume and job-queue
+# state, sends a weekly summary), then doctor and the logs, a few safe repairs,
+# a short report, and the task moved to `task-spec`'s schedule when a reset
+# from Claude moved the day. The sweep never runs maintenance itself.
 
 MAINT_AFTER_RESET = 600         # s after the weekly reset
 MAINT_KEEP_DAYS = 30            # state entries and job logs older than this are pruned
@@ -3961,19 +3966,33 @@ LOG_MAX = 5 * 1024 * 1024       # limit-resume.log is rotated to .log.1 past thi
 TASK_ID = "auto-resume-weekly-maintenance"
 TASK_TITLE = "Auto-resume weekly maintenance"
 TASK_DEFAULT_CRON = "10 13 * * 4"   # Thu 13:10, until this machine has seen its reset
-TASK_PROMPT = """Weekly maintenance for the Claude auto-resume kit on this machine. Unattended: do not ask questions, change nothing beyond the steps below.
+TASK_PROMPT = """Weekly check-up of the Claude auto-resume kit on this machine. Unattended: do not ask questions. Change nothing beyond the steps below. Never commit, push, delete files, edit the kit, state files or job notes, run uninstall.sh, or pass --force. `lr` below means: python3 ~/.claude/tools/limit-resume.py
 
 1. If ~/.claude/tools/limit-resume.py does not exist, reply "auto-resume kit not installed on this machine" and stop.
-2. Call the mcp__ccd_session_mgmt__get_usage tool (load it with ToolSearch first if it is deferred) and take its `plan` object.
-3. If plan.status is "ok", run this, with the plan object as JSON on stdin:
-   python3 ~/.claude/tools/limit-resume.py maintain --scheduled --usage-json - <<'JSON'
-   <the plan object>
-   JSON
-   Otherwise run: python3 ~/.claude/tools/limit-resume.py maintain --scheduled
-   (it then reads usage itself with one Haiku turn).
-4. Run: python3 ~/.claude/tools/limit-resume.py task-spec
-   It prints JSON with "taskId" and "cronExpression". Call mcp__scheduled-tasks__list_scheduled_tasks; if the task with that taskId has a different cronExpression, call mcp__scheduled-tasks__update_scheduled_task with taskId and the new cronExpression (nothing else). This keeps the task 10 minutes after the account's weekly reset when a reset from Claude moves it.
-5. Reply with the "Weekly maintenance" line from step 3, and whether the schedule changed (old -> new)."""
+2. Maintenance. If you have the mcp__ccd_session_mgmt__get_usage tool (load it with ToolSearch first if it is deferred) and its `plan.status` is "ok", run `lr maintain --scheduled --usage-json -` with the plan object as JSON on stdin (a <<'JSON' heredoc). Otherwise run `lr maintain --scheduled` (it reads usage itself with one Haiku turn). Keep its "Weekly maintenance" line.
+3. Check. Run `lr doctor`. Read the last 200 lines of ~/.claude/tools/limit-resume.log and of ~/.claude/tools/limit-resume.err.log. Note every CRASH, FAILED, NEEDS ATTENTION, STALE and any alert repeated over days.
+4. Safe repairs, only for a problem step 3 showed, then `lr doctor` again:
+   a. "last sweep" STALE or the scheduler not loaded/active: macOS `launchctl kickstart gui/$(id -u)/<label>`, Linux `systemctl --user start <label>.timer` (<label> is the `label=` line of ~/.claude/tools/install.conf).
+   b. macOS, Remote Control watched but its breaker tripped or it gave up: `lr rc on` (resets the breaker). Never switch auto mode, the job queue or the Remote Control watch on or off otherwise: those are the human's choices.
+   c. A newer kit: if ~/.claude/tools/install.conf has a `src=` folder that is a git checkout with no uncommitted changes, run `git -C <src> pull --ff-only` (skip on any error or when it has no upstream). If the VERSION line in <src>/limit-resume.py is newer than doctor's version, run `python3 <src>/tests/test_limit_resume.py`; only when it exits 0 (no failed check), run `cd <src> && ./install.sh < /dev/null`. Never --force.
+5. Keep the schedule. Run `lr task-spec`; it prints JSON with "title", "cronExpression" (local time) and "cron" (with CRON_TZ). Find this task by its title with whichever tool you have (mcp__claude-code-remote__list_triggers, or mcp__scheduled-tasks__list_scheduled_tasks). If its schedule differs, change the schedule only (update_trigger with "cron"; update_scheduled_task with "cronExpression").
+6. Report in at most 10 lines: the "Weekly maintenance" line, doctor's verdict before and after, each repair made, and what is left for the human. If doctor still says NEEDS ATTENTION or a repair failed, also run `lr notify "<one-line summary>"`."""
+
+TASK_SETUP = """Set up the weekly check-up of the Claude auto-resume kit on this machine ({host}). A human is here: ask if a step cannot be done.
+
+1. This session must run on {host}: `hostname` prints it and ~/.claude/tools/limit-resume.py exists. If not, stop and tell the human to open this session through Remote Control on {host} (the Claude app or claude.ai/code, with `claude remote-control` or the desktop app running there), not in the cloud.
+2. Create the scheduled task with the first tool you have (load deferred tools with ToolSearch):
+   a. mcp__claude-code-remote__create_trigger (a Claude Code scheduled task): name "{title}", cron_expression "{cron}", prompt = the text between the markers below exactly, create_new_session_on_fire true, environment_id left out (this session's environment is {host}), initiation "human_request". Call list_triggers first: if a task named "{title}" exists, update_trigger it instead.
+   b. mcp__scheduled-tasks__create_scheduled_task (the Claude desktop app): taskId "{task_id}", title "{title}", cronExpression "{cron_local}", the same prompt.
+   c. Neither tool: stop and tell the human what is missing.
+3. Run it once now (fire_trigger, or run the desktop task), wait for its report, and check that `python3 ~/.claude/tools/limit-resume.py doctor` says "scheduled task: last ran" with today's date.
+4. Reply with the tool used, the task id, its next run time, and the first run's report.
+
+Schedule: {cron_local} local time ({tz}), 10 min after this account's weekly reset{reset_note}.
+
+----- prompt start -----
+{prompt}
+----- prompt end -----"""
 
 
 def plan_reading(plan):
@@ -4129,17 +4148,53 @@ def cmd_maintain(argv):
 
 
 def cmd_task_spec(_argv):
-    """The Claude scheduled task that runs the weekly maintenance, as JSON for
-    mcp__scheduled-tasks__create_scheduled_task / update_scheduled_task."""
+    """The Claude scheduled task that runs the weekly maintenance, as JSON:
+    "cronExpression" in local time for the desktop app's scheduler, "cron"
+    with CRON_TZ for a Claude Code scheduled task (create_trigger)."""
+    print(json.dumps(task_spec(), indent=1, ensure_ascii=False))
+    return 0
+
+
+def local_zone():
+    """This machine's IANA time zone name (Asia/Bangkok), or None."""
+    tz = os.environ.get("TZ", "").lstrip(":")
+    if "/" in tz and not tz.startswith("/"):
+        return tz
+    path = os.path.realpath("/etc/localtime")
+    if "zoneinfo/" in path:
+        return path.split("zoneinfo/", 1)[1]
+    try:
+        with open("/etc/timezone") as fh:     # Debian, when /etc/localtime is a copy
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
+def task_spec():
     state = load_state()
     now = time.time()
     resets = weekly_reset(load_usage(), state.get(JOBS_KEY) or {}, now)
-    print(json.dumps({
-        "taskId": TASK_ID, "title": TASK_TITLE, "cronExpression": task_cron(resets),
-        "description": "Weekly auto-resume/backlog maintenance, 10 min after the weekly reset: "
-                       "record the reset date, tidy state, weekly summary",
+    cron, tz = task_cron(resets), local_zone()
+    return {
+        "taskId": TASK_ID, "title": TASK_TITLE, "cronExpression": cron,
+        "timezone": tz, "cron": "CRON_TZ=%s %s" % (tz, cron) if tz else None,
+        "description": "Weekly auto-resume/backlog check-up, 10 min after the weekly reset: "
+                       "record the reset date, tidy state, check health, safe repairs, report",
         "prompt": TASK_PROMPT,
-        "weeklyReset": stamp(resets) if resets else None}, indent=1, ensure_ascii=False))
+        "weeklyReset": stamp(resets) if resets else None}
+
+
+def cmd_task_setup(_argv):
+    """The prompt a human pastes into a Claude Code session on this machine to
+    create the weekly scheduled task (install.sh prints it at the end)."""
+    spec = task_spec()
+    print(TASK_SETUP.format(
+        host=socket.gethostname(), title=spec["title"], task_id=spec["taskId"],
+        cron=spec["cron"] or "CRON_TZ=<ask the human for this machine's IANA time zone> %s"
+        % spec["cronExpression"],
+        cron_local=spec["cronExpression"], tz=spec["timezone"] or "time zone unknown",
+        reset_note="" if spec["weeklyReset"] else " (reset not seen yet: Thu 13:10 until it is)",
+        prompt=spec["prompt"]))
     return 0
 
 
@@ -4751,16 +4806,15 @@ def cmd_doctor(_argv):
         # scheduled task alone (or the first run, until it has run once).
         sched = cfg.get("maint_scheduled")
         stale = time.time() - (sched or cfg.get("maint_first") or last) > MAINT_STALE
-        print("maintenance: %s (%s, %dd ago); %s: %s%s" % (
+        print("maintenance: %s (%s, %dd ago); scheduled task: %s%s" % (
             stamp(last), cfg.get("maint_why", "?"), (time.time() - last) // 86400,
-            "scheduled task" if IS_MAC else "weekly timer",
             "last ran %s" % stamp(sched) if sched else "never ran",
-            (" STALE - is the '%s' scheduled task installed and the app open?" % TASK_ID
-             if IS_MAC else " STALE - is %s-maintenance.timer enabled?" % LABEL)
+            " STALE - is the '%s' scheduled task set up (`task-setup`) and this "
+            "machine's Remote Control server or Claude app up?" % TASK_TITLE
             if stale else ""))
         ok = ok and not stale
     else:
-        print("maintenance: NEVER - create the Claude scheduled task from `task-spec`")
+        print("maintenance: NEVER - set up the Claude scheduled task: `task-setup`")
     js = state.get(JOBS_KEY) or {}
     if js.get("on") or js.get("running") or js.get("open"):
         run = js.get("running")
@@ -4783,7 +4837,7 @@ COMMANDS = {"arm": cmd_arm, "auto": cmd_auto, "sweep": cmd_sweep,
             "status": cmd_status, "disarm": cmd_disarm, "doctor": cmd_doctor,
             "rc": cmd_rc, "notify": cmd_notify, "jobs": cmd_jobs,
             "statusline": cmd_statusline, "guard": cmd_guard, "jobpty": cmd_jobpty,
-            "maintain": cmd_maintain, "task-spec": cmd_task_spec,
+            "maintain": cmd_maintain, "task-spec": cmd_task_spec, "task-setup": cmd_task_setup,
             "deadman": cmd_deadman, "reload-check": cmd_reload_check,
             "git-check": cmd_git_check}
 

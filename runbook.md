@@ -47,6 +47,7 @@ python3 ~/.claude/tools/limit-resume.py rc on|off    # restart Remote Control if
 python3 ~/.claude/tools/limit-resume.py notify       # send a test alert (Pushover, else on-screen)
 python3 ~/.claude/tools/limit-resume.py maintain     # weekly maintenance now (probes usage): reset date, tidy, summary
 python3 ~/.claude/tools/limit-resume.py task-spec    # the Claude scheduled task that runs it weekly, as JSON
+python3 ~/.claude/tools/limit-resume.py task-setup   # the prompt to paste into Claude Code on this machine to create it
 tail -20 ~/.claude/tools/limit-resume.log            # what it actually did
 ```
 
@@ -118,8 +119,8 @@ Session ids are the transcript filenames under
 | `~/.claude/tools/rc-deadman.lock` | held by the one launcher that runs the dead-man check |
 | `~/.claude/tools/jobbin/git` | the job git wrapper: first on a job session's PATH, rewritten at each job launch; asks `limit-resume.py git-check` before the real git |
 | `~/.claude/tools/rc-debug/` | Remote Control debug logs, pruned after 14 days |
-| `~/.claude/tools/weekly-maintenance-task.json` | the weekly maintenance task, for creating it in the Claude app (`task-spec`) |
-| `~/.claude/scheduled-tasks/auto-resume-weekly-maintenance/` | the Claude scheduled task itself, once created |
+| `~/.claude/tools/weekly-check-setup.txt` | the paste-in prompt that creates the weekly scheduled task (`task-setup`) |
+| `~/.claude/scheduled-tasks/auto-resume-weekly-maintenance/` | the desktop app's scheduled task, when it was created there (a Claude Code scheduled task lives on claude.ai) |
 | `~/.claude/tools/usage.json` | last known 5-hour / weekly usage, per window, with source and time |
 | `~/.claude/tools/jobs/<session_id>.pty.log` | a job session's terminal screen (`.pid` beside it: the claude pid) |
 | `~/.claude/tools/jobs/<session_id>.resume.{out,err,exit}` | a headless resume's reply, errors and exit status, read by the sweep after it |
@@ -216,8 +217,10 @@ Constants at the top of `limit-resume.py`:
 a Homebrew python removed). Re-run `install.sh`.
 
 **`maintenance: … scheduled task: never ran STALE`** — install runs count as
-maintenance, but only the Claude scheduled task clears this: create it from
-`task-spec` (README → Weekly maintenance) and check that it runs.
+maintenance, but only the weekly Claude scheduled task clears this: paste
+`limit-resume.py task-setup` into a Claude Code session on this machine
+(README → Weekly maintenance) and check that it runs. Once created, it only
+fires while this machine's Remote Control server or Claude app is up.
 
 **Job lines under `jobs :`** — `job runner CRASHED` (a traceback in
 `limit-resume.log`; a running job is not watched until it is fixed), `usage

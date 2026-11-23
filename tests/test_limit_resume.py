@@ -679,8 +679,8 @@ def _rc_watchdog_scenarios():
         lr.cmd_doctor([])
     out = buf.getvalue()
     check("doctor: Remote Control not used here", "remote ctl : not used here" in out, True)
-    check("doctor: names the weekly timer, not the app task",
-          ("weekly timer: never ran" in out, "scheduled task" in out), (True, False))
+    check("doctor: the scheduled task, named for `task-setup`",
+          ("scheduled task: never ran" in out, "weekly timer" in out), (True, False))
     check("`rc off` still works", lr.cmd_rc(["off"]), 0)
 
     # ---- 16. replay of the 2026-09-27 network outage ---------------------
@@ -1641,6 +1641,7 @@ def batch2_scenarios():
 
 INSTALL_SH = os.path.join(os.path.dirname(HERE), "install.sh")
 UNINSTALL_SH = os.path.join(os.path.dirname(HERE), "uninstall.sh")
+KIT = os.path.dirname(INSTALL_SH)
 
 
 def installer_box():
@@ -1722,7 +1723,7 @@ def installer_scenarios():
     check("tool installed byte for byte",
           read(os.path.join(box["tools"], "limit-resume.py")) == read(TOOL), True)
     check("folder and label saved", read(os.path.join(box["tools"], "install.conf")),
-          "rc_dir=%s\nlabel=%s\n" % (vault, box["label"]))
+          "rc_dir=%s\nlabel=%s\nsrc=%s\n" % (vault, box["label"], KIT))
     launcher = read(os.path.join(box["tools"], "claude-rc.command")) or ""
     check("launcher filled in", ('cd "%s" || exit 1' % vault in launcher,
                                  'PYTHON="%s/python3"' % box["bin"] in launcher,
@@ -1784,7 +1785,7 @@ def installer_scenarios():
     check("one clear line with the fix", "SCHEDULER NOT LOADED - no sweep will run. Fix: "
           "launchctl bootstrap" in out, True)
     check("the later steps still ran", os.path.exists(
-        os.path.join(box["tools"], "weekly-maintenance-task.json")), True)
+        os.path.join(box["tools"], "weekly-check-setup.txt")), True)
     code, out, calls = run_sh(box, INSTALL_SH)
     check("next run loads it", (code, "loaded into launchd" in out), (0, True))
 
@@ -1845,27 +1846,36 @@ def installer_scenarios():
         os.chmod(path, 0o755)
     vault = os.path.join(box["home"], "vault")
     os.makedirs(vault)
-    code, out, calls = run_sh(box, INSTALL_SH, LIMIT_RESUME_RC_DIR=vault)
     units = os.path.join(box["home"], ".config", "systemd", "user")
-    unit = lambda name: read(os.path.join(units, box["label"] + name)) or ""
+    os.makedirs(units)
+    for name in ("-maintenance.service", "-maintenance.timer"):      # left by 2026-11-23.2
+        open(os.path.join(units, box["label"] + name), "w").write("old\n")
+    code, out, calls = run_sh(box, INSTALL_SH, LIMIT_RESUME_RC_DIR=vault)
     check("exit 0", code, 0)
-    check("maintenance service runs `maintain --scheduled`",
-          '"%s/limit-resume.py" maintain --scheduled' % box["tools"]
-          in unit("-maintenance.service"), True)
-    check("weekly, at the task-spec default until a reset is known",
-          "OnCalendar=Thu *-*-* 13:10:00" in unit("-maintenance.timer"), True)
-    check("both timers enabled", [c for c in calls if c.startswith("systemctl --user enable")],
-          ["systemctl --user enable --now %s.timer" % box["label"],
-           "systemctl --user enable --now %s-maintenance.timer" % box["label"]])
-    check("no desktop-app step, no `rc on` hint",
-          ("LAST STEP" in out, "rc on       #" in out,
-           os.path.exists(os.path.join(box["tools"], "weekly-maintenance-task.json"))),
-          (False, False, False))
+    check("only the sweep timer; 2026-11-23.2's maintenance timer disabled and removed",
+          (sorted(os.listdir(units)),
+           [c for c in calls if c.startswith("systemctl --user enable")],
+           any(c.startswith("systemctl --user disable") and "-maintenance.timer" in c
+               for c in calls)),
+          (sorted([box["label"] + ".service", box["label"] + ".timer"]),
+           ["systemctl --user enable --now %s.timer" % box["label"]], True))
+    setup = read(os.path.join(box["tools"], "weekly-check-setup.txt")) or ""
+    check("prints the paste-in setup prompt, no `rc on` hint",
+          ("LAST STEP" in out, setup.strip() in out, "create_trigger" in setup,
+           "rc on       #" in out), (True, True, True, False))
     code, out, calls = run_sh(box, UNINSTALL_SH)
-    check("uninstall disables both timers and removes all four units",
-          (code, any("%s-maintenance.timer" % box["label"] in c for c in calls
-                     if c.startswith("systemctl --user disable")), sorted(os.listdir(units))),
-          (0, True, []))
+    check("uninstall removes the units", (code, sorted(os.listdir(units))), (0, []))
+
+    print("\n51c. install.sh on Windows (Git Bash) refuses")
+    box = installer_box()
+    path = os.path.join(box["bin"], "uname")
+    open(path, "w").write("#!/bin/sh\necho MINGW64_NT-10.0\n")
+    os.chmod(path, 0o755)
+    vault = os.path.join(box["home"], "vault")
+    os.makedirs(vault)
+    code, out, calls = run_sh(box, INSTALL_SH, LIMIT_RESUME_RC_DIR=vault)
+    check("exit 1, says Windows is not supported, nothing installed",
+          (code, "Windows is not supported" in out, tools_files(box)), (1, True, []))
 
 
 # ---- background jobs --------------------------------------------------------
@@ -3044,6 +3054,33 @@ def _jobs_scenarios():
     check("task-spec prompt reads usage and reschedules itself",
           all(k in spec["prompt"] for k in ("get_usage", "maintain --scheduled --usage-json -",
                                              "task-spec", "update_scheduled_task")), True)
+    check("task-spec: the same schedule with CRON_TZ, for a Claude Code scheduled task",
+          spec["cron"], "CRON_TZ=%s 10 13 * * 4" % spec["timezone"] if spec["timezone"] else None)
+    old_tz = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Paris"
+    try:
+        check("local_zone: TZ wins", lr.local_zone(), "Europe/Paris")
+    finally:
+        os.environ.pop("TZ") if old_tz is None else os.environ.__setitem__("TZ", old_tz)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        lr.cmd_task_setup([])
+    setup = buf.getvalue()
+    check("task-setup: the prompt verbatim, both tools, this host, run once",
+          (lr.TASK_PROMPT in setup, "create_trigger" in setup, "create_scheduled_task" in setup,
+           lr.socket.gethostname() in setup, "fire_trigger" in setup), (True,) * 5)
+    zone = lr.local_zone
+    lr.local_zone = lambda: None
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        lr.cmd_task_setup([])
+    lr.local_zone = zone
+    check("task-setup: unknown zone -> asks the human",
+          "CRON_TZ=<ask the human for this machine's IANA time zone> 10 13 * * 4" in buf.getvalue(), True)
+    check("check-up prompt: safe repairs only, report, never --force",
+          all(k in lr.TASK_PROMPT for k in ("launchctl kickstart", "systemctl --user start",
+                                             "rc on", "pull --ff-only", "Never --force",
+                                             "lr notify", "Never commit, push")), True)
     # a reset handed out moves the day: the next run records it, flags it, moves the cron
     moved = thu + 2 * 86400 + 3 * 3600                      # Saturday 16:00
     plan["windows"][1]["resetsAt"] = iso(moved)
@@ -3665,7 +3702,7 @@ def installer_decisions():
     check("exit 0", code, 0)
     check("install.conf: one rc_dir line per folder, in order",
           read(os.path.join(tools, "install.conf")),
-          "rc_dir=%s\nrc_dir=%s\nlabel=%s\n" % (vault, notes, box["label"]))
+          "rc_dir=%s\nrc_dir=%s\nlabel=%s\nsrc=%s\n" % (vault, notes, box["label"], KIT))
     first, second = (read(os.path.join(tools, f)) or "" for f in
                      ("claude-rc.command", "claude-rc-notes.command"))
     check("first folder keeps the one-folder kit's launcher, status and lock",
@@ -3707,7 +3744,7 @@ def installer_decisions():
     check("a one-folder install.conf is taken as a list of one (no env, no terminal)",
           (code, read(os.path.join(tools, "install.conf")),
            os.path.exists(os.path.join(tools, "claude-rc-notes.command"))),
-          (0, "rc_dir=%s\nlabel=%s\n" % (notes, box["label"]), False))
+          (0, "rc_dir=%s\nlabel=%s\nsrc=%s\n" % (notes, box["label"], KIT), False))
 
     code, out = run_tty(box, INSTALL_SH, "%s\n~/Code/notes:%s\n\n" % (vault, other), "--no-start")
     check("from a terminal it asks, showing the saved list",
@@ -3716,7 +3753,7 @@ def installer_decisions():
           (code, 'named "notes"' in out), (1, True))
     code, out = run_tty(box, INSTALL_SH, "%s\n~/Code/notes\n\n" % vault, "--no-start")
     check("typed list saved", (code, read(os.path.join(tools, "install.conf"))),
-          (0, "rc_dir=%s\nrc_dir=%s\nlabel=%s\n" % (vault, notes, box["label"])))
+          (0, "rc_dir=%s\nrc_dir=%s\nlabel=%s\nsrc=%s\n" % (vault, notes, box["label"], KIT)))
     code, out = run_tty(box, INSTALL_SH, "\n", "--no-start")
     check("an empty first line keeps the saved list",
           (code, read(os.path.join(tools, "install.conf")).count("rc_dir=")), (0, 2))
@@ -3944,6 +3981,7 @@ def main():
     write_transcript(root, "sess-nobin", "quota", reset_delta=-600)
     lr.save_state({lr.CONFIG: {"auto_all": True}})
     os.environ["PATH"] = "/usr/bin:/bin"            # ps still runs, claude is gone
+    lr.CLAUDE_PATH_HINT = ""                         # ~/.local/bin may hold the real one
     try:
         rc = lr.cmd_sweep([])
     finally:
