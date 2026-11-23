@@ -3,22 +3,35 @@
 For a machine already running an earlier version of this kit. New installs
 should follow [[INSTALL]] instead — it does all of this.
 
-## Current version: 2026-11-23.1
+## Current version: 2026-11-23.2
 
 `limit-resume.py doctor` prints the version on its second line. A machine whose
 `doctor` has no `version` line is running a build older than this one.
 
 | file | sha256 (first 12) |
 |---|---|
-| `limit-resume.py` | `7bbd5512fcc1` |
+| `limit-resume.py` | `79a091660015` |
 | `claude-rc.command.in` | `a0ca0788fe92` |
-| `install.sh` | `3cb983b438d5` |
-| `uninstall.sh` | `7eb97590f49e` |
-| `tests/test_limit_resume.py` | `1ca06a97ddb2` |
+| `install.sh` | `3d92fd9bfd86` |
+| `uninstall.sh` | `9c5f430539be` |
+| `tests/test_limit_resume.py` | `41f26c669ca9` |
 
 ```bash
 shasum -a 256 limit-resume.py ~/.claude/tools/limit-resume.py | cut -c1-12,65-
 ```
+
+## 2026-11-23.2: Linux - no Remote Control watch, maintenance by timer
+
+On Linux, re-run `install.sh` once: it writes and enables
+`<label>-maintenance.{service,timer}`. On a Mac nothing changes in behaviour;
+re-run `install.sh` only to pick up the new version.
+
+| change | why it matters |
+|---|---|
+| `rc on` refuses on Linux; the watchdog skips Linux even if an older build left `rc_watch` on; doctor prints `remote ctl : not used here` | The watchdog reopens its launcher with macOS `open` (Terminal). On Linux doctor used to say "not watched (`rc on` to enable)", inviting a command that cannot work. |
+| Linux install writes a weekly `<label>-maintenance.timer` running `maintain --scheduled` (10 min after the weekly reset known at install; `Persistent=true`); uninstall removes it | Linux has no Claude desktop app, so the weekly scheduled task could never be created and doctor would go STALE after 8 days. The sweep still never runs maintenance itself. Re-run `install.sh` if the weekly reset moves. |
+| Linux install no longer prints the desktop-app LAST STEP or writes `weekly-maintenance-task.json`; doctor says `weekly timer` there | No instruction that cannot be followed on that machine. |
+| Tests 15b and 51b (12 checks) | `rc on` refused, old `rc_watch` ignored, doctor wording; Linux install/uninstall of both timers, with `uname`/`systemctl`/`loginctl` stubbed. |
 
 ## 2026-11-23.1: commit between jobs
 

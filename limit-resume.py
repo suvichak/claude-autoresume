@@ -50,7 +50,11 @@ import urllib.parse
 import urllib.request
 import uuid as uuidlib
 
-VERSION = "2026-11-23.1"
+VERSION = "2026-11-23.2"
+
+# The Remote Control watchdog reopens its launcher with macOS `open` (Terminal)
+# and the weekly maintenance runs from the Claude desktop app; Linux has neither.
+IS_MAC = sys.platform == "darwin"
 
 HOME = os.path.expanduser("~")
 PROJECTS = os.path.join(HOME, ".claude", "projects")
@@ -555,6 +559,9 @@ def cmd_auto(argv):
 def cmd_rc(argv):
     if not argv or argv[0] not in ("on", "off"):
         print("usage: limit-resume.py rc on|off")
+        return 2
+    if argv[0] == "on" and not IS_MAC:
+        print("Remote Control watching is macOS only: it reopens the launcher in Terminal.")
         return 2
     state = load_state()
     cfg = state.setdefault(CONFIG, {})
@@ -1126,7 +1133,7 @@ def rc_watchdog(state):
     """Restart each folder's Remote Control server if it has gone missing.
     Opt-in via `rc on`. True if a launcher was opened."""
     cfg = state.setdefault(CONFIG, {})
-    if not cfg.get("rc_watch"):
+    if not cfg.get("rc_watch") or not IS_MAC:
         return False
     opened = False
     for folder in rc_folders():
@@ -4723,7 +4730,9 @@ def cmd_doctor(_argv):
              "new chat": "new Remote Control chat"}.get(act.get("how"), "chat continuing"),
             act.get("sid"), (time.time() - act.get("at", time.time())) // 60,
             ", pid %s" % act.get("pid") if act.get("pid") else ""))
-    if cfg.get("rc_watch"):
+    if not IS_MAC:
+        print("remote ctl : not used here (the watchdog is macOS only)")
+    elif cfg.get("rc_watch"):
         rows = ps_rows()
         for folder in rc_folders():
             line, healthy = rc_health(rc_state(cfg, folder), folder, rc_serving(rows, folder))
@@ -4742,10 +4751,12 @@ def cmd_doctor(_argv):
         # scheduled task alone (or the first run, until it has run once).
         sched = cfg.get("maint_scheduled")
         stale = time.time() - (sched or cfg.get("maint_first") or last) > MAINT_STALE
-        print("maintenance: %s (%s, %dd ago); scheduled task: %s%s" % (
+        print("maintenance: %s (%s, %dd ago); %s: %s%s" % (
             stamp(last), cfg.get("maint_why", "?"), (time.time() - last) // 86400,
+            "scheduled task" if IS_MAC else "weekly timer",
             "last ran %s" % stamp(sched) if sched else "never ran",
-            " STALE - is the '%s' scheduled task installed and the app open?" % TASK_ID
+            (" STALE - is the '%s' scheduled task installed and the app open?" % TASK_ID
+             if IS_MAC else " STALE - is %s-maintenance.timer enabled?" % LABEL)
             if stale else ""))
         ok = ok and not stale
     else:

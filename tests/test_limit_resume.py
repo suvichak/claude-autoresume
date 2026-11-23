@@ -659,6 +659,30 @@ def _rc_watchdog_scenarios():
     lr.cmd_sweep([])
     check("after `rc off` sweeps never launch", len(opens()), 1)
 
+    # ---- 15b. Linux: no Remote Control watch ------------------------------
+    import io, contextlib
+    root, lr, calls, opens = rc_scenario("15b. Linux: `rc on` refused, watchdog idle, doctor says so")
+    lr.IS_MAC = False
+    lr.rc_running = lambda _folder: False
+    lr.save_state({lr.CONFIG: {"rc_watch": True}})         # left on by an older build
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = lr.cmd_rc(["on"])
+    check("`rc on` refused", code, 2)
+    check("state untouched", json.load(open(lr.STATE))[lr.CONFIG].get("rc_tries"), None)
+    lr.cmd_sweep([])
+    check("an old rc_watch never launches", len(opens()), 0)
+    lr.scheduler_status = lambda: ("systemd : timer is active", True, False)
+    lr.save_state({lr.CONFIG: {"last_sweep_at": lr.time.time(), "last_sweep": "x",
+                               "maint_last": lr.time.time(), "maint_first": lr.time.time()}})
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        lr.cmd_doctor([])
+    out = buf.getvalue()
+    check("doctor: Remote Control not used here", "remote ctl : not used here" in out, True)
+    check("doctor: names the weekly timer, not the app task",
+          ("weekly timer: never ran" in out, "scheduled task" in out), (True, False))
+    check("`rc off` still works", lr.cmd_rc(["off"]), 0)
+
     # ---- 16. replay of the 2026-09-27 network outage ---------------------
     # 22:38 DNS died; RC gave up at 22:49; launchd swept every 300s. Back then
     # each relaunch died on POST /v1/environments/bridge, three tries tripped
@@ -1810,6 +1834,38 @@ def installer_scenarios():
     check("says the backup was kept", "kept backup" in out, True)
     check("--obsidian removes that Login Item too",
           any('delete login item "Obsidian"' in c for c in calls), True)
+
+    print("\n51b. install.sh / uninstall.sh on Linux")
+    box = installer_box()
+    for exe, body in {"uname": "echo Linux\n",
+                      "systemctl": 'echo "systemctl $*" >> "%s"\n' % box["calls"],
+                      "loginctl": 'echo "Linger=yes"\n'}.items():
+        path = os.path.join(box["bin"], exe)
+        open(path, "w").write("#!/bin/sh\n" + body)
+        os.chmod(path, 0o755)
+    vault = os.path.join(box["home"], "vault")
+    os.makedirs(vault)
+    code, out, calls = run_sh(box, INSTALL_SH, LIMIT_RESUME_RC_DIR=vault)
+    units = os.path.join(box["home"], ".config", "systemd", "user")
+    unit = lambda name: read(os.path.join(units, box["label"] + name)) or ""
+    check("exit 0", code, 0)
+    check("maintenance service runs `maintain --scheduled`",
+          '"%s/limit-resume.py" maintain --scheduled' % box["tools"]
+          in unit("-maintenance.service"), True)
+    check("weekly, at the task-spec default until a reset is known",
+          "OnCalendar=Thu *-*-* 13:10:00" in unit("-maintenance.timer"), True)
+    check("both timers enabled", [c for c in calls if c.startswith("systemctl --user enable")],
+          ["systemctl --user enable --now %s.timer" % box["label"],
+           "systemctl --user enable --now %s-maintenance.timer" % box["label"]])
+    check("no desktop-app step, no `rc on` hint",
+          ("LAST STEP" in out, "rc on       #" in out,
+           os.path.exists(os.path.join(box["tools"], "weekly-maintenance-task.json"))),
+          (False, False, False))
+    code, out, calls = run_sh(box, UNINSTALL_SH)
+    check("uninstall disables both timers and removes all four units",
+          (code, any("%s-maintenance.timer" % box["label"] in c for c in calls
+                     if c.startswith("systemctl --user disable")), sorted(os.listdir(units))),
+          (0, True, []))
 
 
 # ---- background jobs --------------------------------------------------------

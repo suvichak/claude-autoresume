@@ -87,9 +87,11 @@ Darwin)
   fi
   ;;
 Linux)
-  systemctl --user disable --now "$LABEL.timer" 2>/dev/null || true
+  systemctl --user disable --now "$LABEL.timer" "$LABEL-maintenance.timer" 2>/dev/null || true
   rm -f "$HOME/.config/systemd/user/$LABEL.service" \
-        "$HOME/.config/systemd/user/$LABEL.timer"
+        "$HOME/.config/systemd/user/$LABEL.timer" \
+        "$HOME/.config/systemd/user/$LABEL-maintenance.service" \
+        "$HOME/.config/systemd/user/$LABEL-maintenance.timer"
   systemctl --user daemon-reload 2>/dev/null || true
   echo "removed the systemd units"
   # Other user services may rely on lingering, so it is left as it is.
