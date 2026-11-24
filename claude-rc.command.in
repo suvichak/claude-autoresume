@@ -133,8 +133,10 @@ zmodload zsh/zselect
   done ) >/dev/null 2>&1 &
 DEADMAN=$!
 
-# Not exec'd: the shell stays to record how the server ended.
-"$CLAUDE" remote-control --name "@RC_NAME@" --debug-file "$DEBUG_LOG"
+# Not exec'd: the shell stays to record how the server ended. Sessions it
+# spawns (from the phone, claude.ai/code, scheduled tasks) start in auto mode,
+# not manual: unattended work would otherwise stop at the first permission ask.
+"$CLAUDE" remote-control --name "@RC_NAME@" --permission-mode auto --debug-file "$DEBUG_LOG"
 code=$?
 kill $DEADMAN 2>/dev/null
 reason=exit

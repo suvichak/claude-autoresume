@@ -1011,8 +1011,8 @@ def launcher_scenarios():
         return
     r = launcher_run("21. launcher: clean start and stop")
     check("server started once", len(r["started"]), 1)
-    check("named and given a debug file",
-          "--name auto-test --debug-file" in r["started"][0], True)
+    check("named, in auto mode, and given a debug file",
+          "--name auto-test --permission-mode auto --debug-file" in r["started"][0], True)
     check("three good probes before starting", r["curls"], 3)
     check("status records a plain exit", r["status"][1:3], ["exit", "0"])
     check("lock released", r["lock"], False)
@@ -1563,6 +1563,10 @@ def batch2_scenarios():
     check("ours, with a debug path holding a space", lr.rc_server(rows, lr.rc_folders()[0]),
           (12, "/Users/u s/.claude/tools/rc-debug/rc-1.log"))
     check("another folder's or a hand-started server: not ours", lr.rc_server(rows[:2], lr.rc_folders()[0]), None)
+    auto = [(13, 1, "/u/.local/bin/claude remote-control --name auto-My Vault --permission-mode auto "
+                    "--debug-file /Users/u s/.claude/tools/rc-debug/rc-2.log")]
+    check("with --permission-mode auto (2026-11-23.4 launcher): still ours, same log",
+          lr.rc_server(auto, lr.rc_folders()[0]), (13, "/Users/u s/.claude/tools/rc-debug/rc-2.log"))
     os.unlink(lr.INSTALL_CONF)
     check("no install.conf -> the first server", lr.rc_server(rows, lr.rc_folders()[0])[0], 10)
 
@@ -1728,6 +1732,8 @@ def installer_scenarios():
     check("launcher filled in", ('cd "%s" || exit 1' % vault in launcher,
                                  'PYTHON="%s/python3"' % box["bin"] in launcher,
                                  re.findall(r"@[A-Z_]+@", launcher)), (True, True, []))
+    check("spawned sessions start in auto mode, not manual",
+          '--name "auto-vault" --permission-mode auto --debug-file' in launcher, True)
     check("plist written", os.path.exists(box["plist"]), True)
     check("bootstrapped once, no bootout",
           ([c for c in calls if "launchctl boot" in c]),

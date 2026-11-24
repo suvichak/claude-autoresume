@@ -3,22 +3,34 @@
 For a machine already running an earlier version of this kit. New installs
 should follow [[INSTALL]] instead — it does all of this.
 
-## Current version: 2026-11-23.3
+## Current version: 2026-11-23.4
 
 `limit-resume.py doctor` prints the version on its second line. A machine whose
 `doctor` has no `version` line is running a build older than this one.
 
 | file | sha256 (first 12) |
 |---|---|
-| `limit-resume.py` | `1f200f74bbc3` |
-| `claude-rc.command.in` | `a0ca0788fe92` |
+| `limit-resume.py` | `271e287ba39e` |
+| `claude-rc.command.in` | `3351ae0477dc` |
 | `install.sh` | `c40ec630aef1` |
 | `uninstall.sh` | `069d57d0bac3` |
-| `tests/test_limit_resume.py` | `8f71eda40ff4` |
+| `tests/test_limit_resume.py` | `c7cab8b76366` |
 
 ```bash
 shasum -a 256 limit-resume.py ~/.claude/tools/limit-resume.py | cut -c1-12,65-
 ```
+
+## 2026-11-23.4: Remote Control sessions start in auto mode
+
+Re-run `install.sh` once (it rewrites the launcher). The running Remote
+Control server keeps its old flags until it next starts (reboot, a crash the
+watchdog restarts, or closing its Terminal window); restarting it ends the
+sessions it spawned, so pick a quiet moment.
+
+| change | why it matters |
+|---|---|
+| The launcher runs `claude remote-control --permission-mode auto` | Every session the server spawns (from the phone, claude.ai/code, or a Claude Code scheduled task such as the weekly check-up) used to start in manual (`default`) mode and stop at its first permission ask. |
+| Tests 21 and 68 cover the flag; the watchdog still finds its server and debug log | The server is matched by `--name`; the extra flag does not change that. |
 
 ## 2026-11-23.3: weekly check-up by a Claude agent; Windows refused
 
