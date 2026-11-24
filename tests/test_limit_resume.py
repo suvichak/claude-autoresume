@@ -1734,6 +1734,9 @@ def installer_scenarios():
                                  re.findall(r"@[A-Z_]+@", launcher)), (True, True, []))
     check("spawned sessions start in auto mode, not manual",
           '--name "auto-vault" --permission-mode auto --debug-file' in launcher, True)
+    settings = os.path.join(box["home"], ".claude", "settings.json")
+    check("every session starts in auto: settings.json created with defaultMode auto",
+          json.loads(read(settings) or "{}"), {"permissions": {"defaultMode": "auto"}})
     check("plist written", os.path.exists(box["plist"]), True)
     check("bootstrapped once, no bootout",
           ([c for c in calls if "launchctl boot" in c]),
@@ -1841,6 +1844,33 @@ def installer_scenarios():
     check("says the backup was kept", "kept backup" in out, True)
     check("--obsidian removes that Login Item too",
           any('delete login item "Obsidian"' in c for c in calls), True)
+
+    print("\n51d. install.sh: default permission mode merged into settings.json")
+    box = installer_box()
+    vault = os.path.join(box["home"], "vault")
+    os.makedirs(vault)
+    claude_dir = os.path.join(box["home"], ".claude")
+    os.makedirs(claude_dir)
+    settings = os.path.join(claude_dir, "settings.json")
+    mine = {"model": "opus", "permissions": {"allow": ["Bash(ls)"], "defaultMode": "default"},
+            "hooks": {"Stop": []}}
+    open(settings, "w").write(json.dumps(mine))
+    code, out, _ = run_sh(box, INSTALL_SH, LIMIT_RESUME_RC_DIR=vault)
+    got = json.loads(read(settings))
+    backups = [f for f in os.listdir(claude_dir) if f.startswith("settings.json.bak-")]
+    check("manual -> auto, every other key kept, one backup of the old file",
+          (code, got["permissions"]["defaultMode"], got["permissions"]["allow"], got["model"],
+           got["hooks"], len(backups), json.loads(read(os.path.join(claude_dir, backups[0])))
+           if backups else None, "manual -> auto" in out),
+          (0, "auto", ["Bash(ls)"], "opus", {"Stop": []}, 1, mine, True))
+    code, out, _ = run_sh(box, INSTALL_SH)
+    check("already auto: no second backup",
+          (code, "already auto" in out,
+           len([f for f in os.listdir(claude_dir) if f.startswith("settings.json.bak-")])), (0, True, 1))
+    open(settings, "w").write("{broken")
+    code, out, _ = run_sh(box, INSTALL_SH)
+    check("a settings.json that does not parse is left alone, install goes on",
+          (code, read(settings), "does not parse" in out), (0, "{broken", True))
 
     print("\n51b. install.sh / uninstall.sh on Linux")
     box = installer_box()

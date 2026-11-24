@@ -51,7 +51,7 @@ import urllib.parse
 import urllib.request
 import uuid as uuidlib
 
-VERSION = "2026-11-23.4"
+VERSION = "2026-11-23.5"
 
 # The Remote Control watchdog reopens its launcher with macOS `open` (Terminal);
 # Linux has no Terminal app to hand it to.

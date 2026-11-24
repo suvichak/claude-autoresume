@@ -3,22 +3,32 @@
 For a machine already running an earlier version of this kit. New installs
 should follow [[INSTALL]] instead — it does all of this.
 
-## Current version: 2026-11-23.4
+## Current version: 2026-11-23.5
 
 `limit-resume.py doctor` prints the version on its second line. A machine whose
 `doctor` has no `version` line is running a build older than this one.
 
 | file | sha256 (first 12) |
 |---|---|
-| `limit-resume.py` | `271e287ba39e` |
+| `limit-resume.py` | `cd97e877ef8c` |
 | `claude-rc.command.in` | `3351ae0477dc` |
-| `install.sh` | `c40ec630aef1` |
+| `install.sh` | `5e1dc6fbf408` |
 | `uninstall.sh` | `069d57d0bac3` |
-| `tests/test_limit_resume.py` | `c7cab8b76366` |
+| `tests/test_limit_resume.py` | `f778988b8a5a` |
 
 ```bash
 shasum -a 256 limit-resume.py ~/.claude/tools/limit-resume.py | cut -c1-12,65-
 ```
+
+## 2026-11-23.5: every Claude Code session starts in auto mode
+
+Re-run `install.sh` once. Sessions started after that begin in auto mode; ones
+already open keep their mode.
+
+| change | why it matters |
+|---|---|
+| install.sh sets `permissions.defaultMode` to `"auto"` in `~/.claude/settings.json`, merged into the existing file (every other key kept), with a `settings.json.bak-<time>` copy before a change; a file that does not parse is left alone with a NOTE | Every session on the machine - terminal `claude`, the desktop app, Remote Control, scheduled tasks - starts in auto, not manual. To go back, set `defaultMode` in that file or with `/config`; uninstall.sh leaves it as it is. |
+| Test 51d (3 checks) and a check in 45 | Fresh file, merge with backup, already auto, unreadable file. |
 
 ## 2026-11-23.4: Remote Control sessions start in auto mode
 

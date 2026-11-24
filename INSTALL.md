@@ -34,14 +34,17 @@ Install the Claude auto-resume kit (https://github.com/suvichak/claude-autoresum
 ## The short version
 
 ```bash
-python3 tests/test_limit_resume.py    # 964 checks, ~90s, no network, no spend
+python3 tests/test_limit_resume.py    # 970 checks, ~90s, no network, no spend
 ./install.sh                          # asks for the Remote Control folder(s), installs, starts
 python3 ~/.claude/tools/limit-resume.py auto on
 python3 ~/.claude/tools/limit-resume.py doctor
 ```
 
 `install.sh` writes the scheduler file with this machine's real home directory
-and `python3` path, so nothing needs hand-editing. Remote Control serves one
+and `python3` path, so nothing needs hand-editing. It also sets
+`permissions.defaultMode` to `"auto"` in `~/.claude/settings.json` (merged, with a
+`settings.json.bak-<time>` copy first), so every Claude Code session on the
+machine starts in auto mode, not manual. Remote Control serves one
 or more folders, one server each, named `auto-<folder name>`. Run from a
 terminal, the installer asks for them - one per line, or several separated by
 `:`; an empty first line keeps the folders the last install saved in

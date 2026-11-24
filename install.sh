@@ -243,6 +243,40 @@ mv "$TOOL.new" "$TOOL"
 mv "$CONF.new" "$CONF"
 echo "wrote $CONF"
 
+# Every Claude Code session on this machine starts in auto mode, not manual:
+# permissions.defaultMode = "auto" in the user settings, merged into what is
+# there, with a backup before a change. A file that does not parse is left alone.
+SETTINGS="$HOME/.claude/settings.json"
+"$PYTHON" - "$SETTINGS" <<'SETEOF'
+import json, os, shutil, sys, time
+path = sys.argv[1]
+try:
+    with open(path) as fh:
+        data = json.load(fh)
+except FileNotFoundError:
+    data = {}
+except ValueError as exc:
+    print("NOTE: %s does not parse (%s); default permission mode not set" % (path, exc))
+    sys.exit(0)
+if not isinstance(data, dict) or not isinstance(data.get("permissions", {}), dict):
+    print("NOTE: %s has an unexpected shape; default permission mode not set" % path)
+    sys.exit(0)
+perms = data.setdefault("permissions", {})
+if perms.get("defaultMode") == "auto":
+    print("default permission mode already auto (%s)" % path)
+    sys.exit(0)
+if os.path.exists(path):
+    shutil.copy2(path, "%s.bak-%s" % (path, time.strftime("%Y%m%d%H%M%S")))
+old = perms.get("defaultMode")
+perms["defaultMode"] = "auto"
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path + ".new", "w") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+os.replace(path + ".new", path)
+print("default permission mode: %s -> auto (%s)" % (old if old not in (None, "default") else "manual", path))
+SETEOF
+
 # One Remote Control launcher per folder. Generated rather than copied so paths
 # and the served folder match this machine. The template is filled in with sed,
 # never a shell heredoc: an unquoted heredoc expands $(pwd) at install time and
