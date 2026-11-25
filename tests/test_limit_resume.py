@@ -56,6 +56,9 @@ def load_tool(root, fake_claude_out):
     lr.INSTALL_CONF = os.path.join(root, "install.conf")
     lr.JOB_BIN = os.path.join(root, "jobbin")
     lr.ARGV_LOG = fake_claude_out
+    # The scenarios simulate macOS unless they say otherwise (lr.IS_MAC = False
+    # for the Linux cases), so the suite checks the same things on macOS and Linux.
+    lr.IS_MAC = True
     return lr
 
 
@@ -872,6 +875,17 @@ def _rc_watchdog_scenarios():
     check("no keys -> local notification", lr.notify("hello"), "local")
     check("no keys -> nothing posted", posts, [])
     check("no keys -> osascript used", [c[0] for c in calls][-1], "osascript")
+    lr.IS_MAC = False
+    check("Linux: no keys -> local notification", lr.notify("hello"), "local")
+    check("Linux: notify-send used, message as its own argument",
+          (calls[-1][0], calls[-1][-1]), ("notify-send", "hello"))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        lr.cmd_notify(["hi"])
+    check("Linux: `notify` does not suggest the macOS Keychain",
+          ("security add-generic-password" in buf.getvalue(), "macOS-only" in buf.getvalue()),
+          (False, True))
+    lr.IS_MAC = True
     check("always logged", "ALERT: hello" in open(lr.LOG).read(), True)
     lr.subprocess.run = fake_run(calls=calls, keys={"token": "T0K", "user": "US3R"})
     check("keys in Keychain -> pushover", lr.notify("hello"), "pushover")
@@ -1294,10 +1308,8 @@ def deadman_scenarios():
     check("a failed write keeps the old state", lr.load_state(), {"a": 1})
     check("and leaves no temp file", temps(), [])
 
-    if sys.platform != "darwin":
-        print("\n(not macOS - launchd scheduler_status tests skipped)")
-        return
     print("\n43. doctor: a held agent is not healthy")
+    lr.IS_MAC = True                     # launchd's checks, simulated on any OS
     lr.HOME = root
     os.makedirs(os.path.join(root, "Library", "LaunchAgents"))
     open(os.path.join(root, "Library", "LaunchAgents", lr.LABEL + ".plist"), "w").write("x")
@@ -1717,7 +1729,9 @@ KIT = os.path.dirname(INSTALL_SH)
 
 
 def installer_box():
-    """A throwaway HOME, with fake launchctl / osascript / claude / ps / security."""
+    """A throwaway HOME, with fake launchctl / osascript / claude / ps / security,
+    systemctl / loginctl, and a fake `uname` so either OS's install path runs on
+    any machine: `uname -s` prints FAKE_UNAME, Darwin by default."""
     root = tempfile.mkdtemp(prefix="lrinst-")
     home, bindir = os.path.join(root, "home"), os.path.join(root, "bin")
     os.makedirs(home)
@@ -1738,7 +1752,14 @@ def installer_box():
         "claude": "exit 0\n",
         "ps": 'cat "%s/ps.out" 2>/dev/null\nexit 0\n' % root,
         "security": "exit 44\n",
+        "uname": 'echo "${FAKE_UNAME:-Darwin}"\n',
+        "systemctl": 'echo "systemctl $*" >> "%s"\nexit 0\n' % calls,
+        "loginctl": 'echo "loginctl $*" >> "%s"\n'
+                    '[ "$1" = show-user ] && echo "Linger=${FAKE_LINGER:-no}"\nexit 0\n' % calls,
     }
+    if not shutil.which("plutil"):          # not macOS: lint the plist with plistlib
+        bins["plutil"] = ('exec "%s" -I -c "import plistlib, sys; plistlib.load(open(sys.argv[-1], \'rb\'))" "$@"\n'
+                          % sys.executable)
     for exe, body in bins.items():
         path = os.path.join(bindir, exe)
         open(path, "w").write("#!/bin/sh\n" + body)
@@ -1763,8 +1784,8 @@ def run_sh(box, script, *args, **env):
 
 
 def installer_scenarios():
-    if sys.platform != "darwin" or not os.path.exists(INSTALL_SH):
-        print("\n(not macOS - install.sh / uninstall.sh tests skipped)")
+    if not os.path.exists(INSTALL_SH):
+        print("\n(install.sh not found - install.sh / uninstall.sh tests skipped)")
         return
     import re
     read = lambda p: open(p).read() if os.path.exists(p) else None
@@ -3790,9 +3811,116 @@ def run_tty(box, script, answers, *args):
     return proc.returncode, proc.stdout + proc.stderr
 
 
+def linux_installer_scenarios():
+    """install.sh / uninstall.sh on Linux (systemd --user), run on any OS with
+    the box's fake `uname` printing Linux and fake systemctl / loginctl."""
+    if not os.path.exists(INSTALL_SH):
+        print("\n(install.sh not found - Linux install tests skipped)")
+        return
+    import re
+    read = lambda p: open(p).read() if os.path.exists(p) else None
+    box = installer_box()
+    units = os.path.join(box["home"], ".config", "systemd", "user")
+    service = os.path.join(units, box["label"] + ".service")
+    timer = os.path.join(units, box["label"] + ".timer")
+    vault, app = os.path.join(box["home"], "vault"), os.path.join(box["home"], "code", "my app")
+    os.makedirs(vault)
+    os.makedirs(app)
+    linux = dict(FAKE_UNAME="Linux", LIMIT_RESUME_RC_DIRS="%s:%s" % (vault, app))
+    # launchd / Login Items; an alert from the tool itself may use osascript on a real Mac
+    mac_calls = lambda calls: [c for c in calls if c.split()[0] == "launchctl"
+                               or (c.startswith("osascript") and "display notification" not in c)]
+
+    print("\n73. install.sh on Linux: systemd user timer, launchers, lingering")
+    code, out, calls = run_sh(box, INSTALL_SH, **linux)
+    check("exit 0", code, 0)
+    unit = read(service) or ""
+    check("service runs a sweep with the installed tool",
+          'ExecStart="%s" "%s" sweep' % (os.path.join(box["bin"], "python3"),
+                                         os.path.join(box["tools"], "limit-resume.py")) in unit, True)
+    check("service: oneshot, KillMode=process, PATH has ~/.local/bin",
+          ("Type=oneshot" in unit, "KillMode=process" in unit,
+           'Environment="PATH=%s/.local/bin:' % box["home"] in unit), (True, True, True))
+    check("service has no Restart= line", re.search(r"^Restart=", unit, re.M) is None, True)
+    tmr = read(timer) or ""
+    check("timer every 5 min, wanted by timers.target",
+          ("OnUnitActiveSec=5min" in tmr, "WantedBy=timers.target" in tmr), (True, True))
+    check("daemon-reload, then the timer enabled",
+          [c for c in calls if c.startswith("systemctl")],
+          ["systemctl --user daemon-reload", "systemctl --user enable --now %s.timer" % box["label"]])
+    check("lingering checked and enabled", [c.split()[1] for c in calls if c.startswith("loginctl")],
+          ["show-user", "enable-linger"])
+    check("no launchd plist, no launchctl, no Login Items",
+          (os.path.exists(box["plist"]), mac_calls(calls)), (False, []))
+    check("one launcher per folder",
+          sorted(f for f in os.listdir(box["tools"]) if f.endswith(".command")),
+          ["claude-rc-my app.command", "claude-rc.command"])
+    check("both folders saved", [l for l in read(os.path.join(box["tools"], "install.conf")).splitlines()
+                                 if l.startswith("rc_dir=")],
+          ["rc_dir=" + vault, "rc_dir=" + app])
+    check("`next:` has no macOS-only `rc on` / `obsidian on`",
+          (" rc on " in out, " obsidian on " in out), (False, False))
+
+    code, out, calls = run_sh(box, INSTALL_SH, FAKE_LINGER="yes", **linux)
+    check("rerun -> exit 0", code, 0)
+    check("lingering already on -> not enabled again",
+          [c.split()[1] for c in calls if c.startswith("loginctl")], ["show-user"])
+
+    os.makedirs(units, exist_ok=True)
+    for ext in ("service", "timer"):
+        open(os.path.join(units, "%s-maintenance.%s" % (box["label"], ext)), "w").write("old")
+    code, out, calls = run_sh(box, INSTALL_SH, "--no-start", **linux)
+    check("--no-start -> exit 0", code, 0)
+    check("--no-start: units written, nothing started",
+          (os.path.exists(service), [c for c in calls if c.split()[0] in ("systemctl", "loginctl")
+                                     and "maintenance" not in c]), (True, []))
+    check("2026-11-23.2 maintenance timer removed",
+          [f for f in os.listdir(units) if "maintenance" in f], [])
+
+    print("\n74. uninstall.sh on Linux: timer stopped, units gone")
+    code, out, calls = run_sh(box, UNINSTALL_SH, FAKE_UNAME="Linux")
+    check("exit 0", code, 0)
+    check("timer disabled, daemon reloaded",
+          [c for c in calls if c.startswith("systemctl")],
+          ["systemctl --user disable --now %s.timer %s-maintenance.timer" % (box["label"], box["label"]),
+           "systemctl --user daemon-reload"])
+    check("units removed", (os.path.exists(service), os.path.exists(timer)), (False, False))
+    check("no launchctl, no Login Items", mac_calls(calls), [])
+    check("lingering left on, says how to turn it off", "disable-linger" in out, True)
+
+
+def linux_doctor_scenarios():
+    root, argv_log, lr = scenario("75. doctor on Linux reads the systemd timer")
+    lr.IS_MAC = False
+    seen = []
+    def run(cmd, *a, **k):
+        seen.append(cmd)
+        return type("R", (), {"stdout": state[0], "stderr": "", "returncode": 0})()
+    state = ["active\n"]
+    real = lr.subprocess.run
+    lr.subprocess.run = run
+    try:
+        check("active timer -> ok", lr.scheduler_status(), ("systemd : timer is active", True, False))
+        check("asks systemctl --user about the timer",
+              seen[-1], ["systemctl", "--user", "is-active", lr.LABEL + ".timer"])
+        state[0] = "inactive\n"
+        check("inactive timer -> not ok", lr.scheduler_status()[:2], ("systemd : timer is inactive", False))
+        state[0] = ""
+        check("no answer -> inactive", lr.scheduler_status()[:2], ("systemd : timer is inactive", False))
+        def missing(*a, **k):
+            raise FileNotFoundError("systemctl")
+        lr.subprocess.run = missing
+        check("no systemctl -> says so", lr.scheduler_status()[:2],
+              ("systemd : systemctl not found - install the timer manually", False))
+    finally:
+        lr.subprocess.run = real
+    check("kickstart hint is systemctl start",
+          lr.kickstart_hint(), "systemctl --user start %s.service" % lr.LABEL)
+
+
 def installer_decisions():
-    if sys.platform != "darwin" or not os.path.exists(INSTALL_SH):
-        print("\n(not macOS - multi-folder install tests skipped)")
+    if not os.path.exists(INSTALL_SH):
+        print("\n(install.sh not found - multi-folder install tests skipped)")
         return
     read = lambda p: open(p).read() if os.path.exists(p) else None
     box = installer_box()
@@ -4149,6 +4277,8 @@ def main():
     batch2_scenarios()
     installer_scenarios()
     installer_decisions()
+    linux_installer_scenarios()
+    linux_doctor_scenarios()
     os.environ["PATH"] = original_path
     jobs_scenarios()
     commit_scenarios()

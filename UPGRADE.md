@@ -3,22 +3,37 @@
 For a machine already running an earlier version of this kit. New installs
 should follow [[INSTALL]] instead — it does all of this.
 
-## Current version: 2026-11-25.1
+## Current version: 2026-11-25.2
 
 `limit-resume.py doctor` prints the version on its second line. A machine whose
 `doctor` has no `version` line is running a build older than this one.
 
 | file | sha256 (first 12) |
 |---|---|
-| `limit-resume.py` | `b9ec41b65279` |
+| `limit-resume.py` | `1e3fe3714713` |
 | `claude-rc.command.in` | `3351ae0477dc` |
 | `install.sh` | `f92242ff4e46` |
 | `uninstall.sh` | `069d57d0bac3` |
-| `tests/test_limit_resume.py` | `6bfe606b4248` |
+| `tests/test_limit_resume.py` | `fd6fa5444591` |
 
 ```bash
 shasum -a 256 limit-resume.py ~/.claude/tools/limit-resume.py | cut -c1-12,65-
 ```
+
+## 2026-11-25.2: the test suite runs on Linux too
+
+Copy the new `limit-resume.py` (or re-run `install.sh`). Behaviour on macOS is
+unchanged. On Linux the only change is where a local alert goes.
+
+| change | why it matters |
+|---|---|
+| Tests: every scenario simulates macOS unless it says otherwise (`load_tool` sets `IS_MAC = True`; the Linux cases set it False). The installer box has a fake `uname` (`FAKE_UNAME`, Darwin by default), fake `systemctl` / `loginctl`, and a `plistlib` stand-in for `plutil` where there is none, so the launchd, install.sh and uninstall.sh tests no longer skip on Linux | Up to 2026-11-25.1 the suite crashed on Linux at test 9 (`KeyError: 'rc_tries'`), so INSTALL step 3 and the weekly check-up's "install only if the tests exit 0" could never pass there: Linux machines never upgraded themselves. |
+| Tests 73-75: install.sh on Linux (systemd service + timer, daemon-reload + enable, lingering, one launcher per folder, `--no-start`, old maintenance timer removed), uninstall.sh on Linux, doctor's systemd check and kickstart hint. They run on both OSes | The Linux install path had no test. |
+| `limit-resume.py`: the three `sys.platform == "darwin"` checks (`runner_name`, `scheduler_status`, `kickstart_hint`) use `IS_MAC` | Same result at run time; lets tests simulate either OS. |
+| Linux: the local alert uses `notify-send` (a desktop notification) instead of trying `osascript`; Pushover stays macOS-only (Keychain) | Linux desktops (e.g. GNOME over RDP) now see alerts; without a desktop it falls back to the log as before. |
+| `notify` on Linux no longer suggests the macOS `security` command; it says Pushover is macOS-only | The hint could not work there. |
+
+Suite: 1020 passed, 0 failed on Linux (Ubuntu 26.04, Python 3.14).
 
 ## 2026-11-25.1: keep the Obsidian app open
 
