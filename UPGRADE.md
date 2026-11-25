@@ -3,22 +3,35 @@
 For a machine already running an earlier version of this kit. New installs
 should follow [[INSTALL]] instead — it does all of this.
 
-## Current version: 2026-11-23.5
+## Current version: 2026-11-25.1
 
 `limit-resume.py doctor` prints the version on its second line. A machine whose
 `doctor` has no `version` line is running a build older than this one.
 
 | file | sha256 (first 12) |
 |---|---|
-| `limit-resume.py` | `cd97e877ef8c` |
+| `limit-resume.py` | `b9ec41b65279` |
 | `claude-rc.command.in` | `3351ae0477dc` |
-| `install.sh` | `5e1dc6fbf408` |
+| `install.sh` | `f92242ff4e46` |
 | `uninstall.sh` | `069d57d0bac3` |
-| `tests/test_limit_resume.py` | `f778988b8a5a` |
+| `tests/test_limit_resume.py` | `6bfe606b4248` |
 
 ```bash
 shasum -a 256 limit-resume.py ~/.claude/tools/limit-resume.py | cut -c1-12,65-
 ```
+
+## 2026-11-25.1: keep the Obsidian app open
+
+Copy the new `limit-resume.py` (or re-run `install.sh`), then on a Mac that
+uses Obsidian run `python3 ~/.claude/tools/limit-resume.py obsidian on`.
+Nothing changes until then.
+
+| change | why it matters |
+|---|---|
+| `obsidian on` / `obsidian off` (macOS): each sweep runs `pgrep -x Obsidian`; if it is not running, `open -g -a Obsidian` (background, no focus steal) and an alert. At most once per 10 min; 3 reopens in a row that leave it closed -> stands down with one alert until `obsidian on`; pgrep failing -> nothing done | A vault synced by an Obsidian plugin (LiveSync) stops syncing when the app quits or crashes. |
+| `doctor` prints an `obsidian` line (watched/running, CLOSED, DOWN, not watched); CLOSED and DOWN make it NEEDS ATTENTION | Same shape as the `remote ctl` line. |
+| `disarm all` also turns it off; a crash in it is logged and never stops the sweep | uninstall.sh relies on `disarm all`. |
+| Test 72 | Off, reopen, throttle, recovery, pgrep failure, breaker + one alert, Linux refusal, `obsidian on` reset, `disarm all`. |
 
 ## 2026-11-23.5: every Claude Code session starts in auto mode
 

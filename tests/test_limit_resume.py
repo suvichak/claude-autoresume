@@ -203,6 +203,74 @@ def rc_watchdog_scenarios():
         subprocess.run, os.kill = real_run, real_kill
 
 
+def obsidian_scenarios():
+    """72. `obsidian on` keeps the Obsidian app open."""
+    real_run = subprocess.run
+    try:
+        _obsidian_scenarios()
+    finally:
+        subprocess.run = real_run
+
+
+def _obsidian_scenarios():
+    root, argv_log, lr = scenario("72. the Obsidian watchdog reopens the app")
+    lr.time = Clock()
+    lr.IS_MAC = True
+    up = [False]                        # pgrep's answer; None: pgrep fails
+    calls, alerts = [], []
+
+    def run(cmd, *a, **k):
+        calls.append(cmd)
+        code = 0
+        if cmd[0] == "pgrep":
+            if up[0] is None:
+                raise OSError("no pgrep")
+            code = 0 if up[0] else 1
+        return type("R", (), {"stdout": "", "stderr": "", "returncode": code})()
+    lr.subprocess.run = run
+    lr.notify = lambda msg: alerts.append(msg) or "local"
+    opens = lambda: [c for c in calls if c[0] == "open"]
+
+    check("off -> never opens", lr.obsidian_watchdog({lr.CONFIG: {}}), False)
+    check("off -> not even asked", calls, [])
+    st = {lr.CONFIG: {"obsidian_watch": True}}
+    check("closed -> opens", lr.obsidian_watchdog(st), True)
+    check("opened in the background", opens(), [["open", "-g", "-a", "Obsidian"]])
+    check("alert on reopen", len(alerts), 1)
+    check("throttled within 10 min", lr.obsidian_watchdog(st), False)
+    up[0] = True
+    lr.time.t += lr.OBS_MIN_INTERVAL
+    check("open again -> nothing to do", lr.obsidian_watchdog(st), False)
+    check("open again -> breaker reset", "obs_tries" in st[lr.CONFIG], False)
+    check("recovery logged", "Obsidian is open" in open(lr.LOG).read(), True)
+
+    up[0] = None
+    del calls[:]
+    check("pgrep fails -> never opened blind", lr.obsidian_watchdog(st), False)
+    check("pgrep fails -> no open", opens(), [])
+
+    up[0] = False
+    del alerts[:]
+    for _ in range(lr.OBS_MAX_TRIES + 2):
+        lr.time.t += lr.OBS_MIN_INTERVAL
+        lr.obsidian_watchdog(st)
+    check("breaker caps reopens", len(opens()), lr.OBS_MAX_TRIES)
+    check("one stand-down alert", sum("Standing down" in a for a in alerts), 1)
+    lr.IS_MAC = False
+    check("not macOS -> never opens", lr.obsidian_watchdog({lr.CONFIG: {"obsidian_watch": True}}),
+          False)
+    check("not macOS -> `obsidian on` refused", lr.cmd_obsidian(["on"]), 2)
+    lr.IS_MAC = True
+    check("`obsidian on` -> 0", lr.cmd_obsidian(["on"]), 0)
+    cfg = lr.load_state()[lr.CONFIG]
+    check("`obsidian on` sets the watch", cfg.get("obsidian_watch"), True)
+    check("`obsidian on` resets the breaker",
+          [k for k in lr.OBS_FLAGS if k in cfg], [])
+    check("bad argument -> usage", lr.cmd_obsidian(["maybe"]), 2)
+    lr.cmd_disarm(["all"])
+    check("`disarm all` stops the watch", lr.load_state()[lr.CONFIG].get("obsidian_watch"), False)
+
+
 class FakeProcs:
     """A process table: `ps` lists it, `kill` edits it and records signals."""
     def __init__(self, rows, stubborn=()):
@@ -4075,6 +4143,7 @@ def main():
     subprocess.run = real_run         # lr.subprocess IS the global module
 
     rc_watchdog_scenarios()
+    obsidian_scenarios()
     launcher_scenarios()        # after the real subprocess.run is restored
     deadman_scenarios()
     batch2_scenarios()

@@ -94,6 +94,18 @@ watchdog leaves it alone and starts nothing next to it). A server for another
 folder does not count. Auto-resume still covers sessions in every folder; the
 list only says which folders get a Remote Control server.
 
+## Obsidian is kept open (2026-11-25)
+
+`limit-resume.py obsidian on` (macOS, opt-in) adds a second watchdog to the
+sweep: if the Obsidian app is not running (`pgrep -x Obsidian`), it is reopened
+in the background with `open -g -a Obsidian` and an alert says so. A vault
+synced by an Obsidian plugin (LiveSync and the like) only syncs while the app
+runs, so a crash or an accidental quit would otherwise stop the sync until
+someone noticed. At most one reopen per 10 min; after 3 reopens in a row that
+leave it closed, it stands down with one alert until `obsidian on`. When
+`pgrep` cannot answer, it does nothing. `obsidian off` and `disarm all` stop it.
+It never quits or restarts a running Obsidian.
+
 ## Background jobs: spend the quota the week would otherwise lose (2026-11-18)
 
 Weekly quota left over at the weekly reset is gone. The same sweep can run a

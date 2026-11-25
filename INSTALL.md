@@ -24,7 +24,7 @@ Install the Claude auto-resume kit (https://github.com/suvichak/claude-autoresum
 2. Get the kit: `git clone https://github.com/suvichak/claude-autoresume.git ~/Project/claude-autoresume`, or `git -C ~/Project/claude-autoresume pull --ff-only` if it is already there.
 3. Run `python3 ~/Project/claude-autoresume/tests/test_limit_resume.py`. It must exit 0 ("0 failed"); otherwise stop and show the failed checks.
 4. Ask the human which folder(s) Remote Control should serve (default ~/_obsidian; several separated by ':'; each must exist). Then: cd ~/Project/claude-autoresume && LIMIT_RESUME_RC_DIRS="<folders>" ./install.sh < /dev/null
-5. Run `python3 ~/.claude/tools/limit-resume.py auto on`. On macOS only, also `python3 ~/.claude/tools/limit-resume.py rc on`. Never `rc on` on Linux.
+5. Run `python3 ~/.claude/tools/limit-resume.py auto on`. On macOS only, also `python3 ~/.claude/tools/limit-resume.py rc on`, and `python3 ~/.claude/tools/limit-resume.py obsidian on` if the human uses Obsidian on this machine (ask). Never `rc on` or `obsidian on` on Linux.
 6. Run `python3 ~/.claude/tools/limit-resume.py doctor`. Expect "healthy"; "scheduled task: never ran" is expected until step 7.
 7. Weekly check-up: run `python3 ~/.claude/tools/limit-resume.py task-setup`. If this session runs on this machine through Remote Control or the Claude desktop app and has mcp__claude-code-remote__create_trigger or mcp__scheduled-tasks__create_scheduled_task, follow that prompt now. Otherwise show it to the human: they paste it into such a session.
 8. Report: the installed version, the doctor output, and the scheduled task (or the step left for the human).

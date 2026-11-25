@@ -483,6 +483,7 @@ echo "next:"
 echo "  $PYTHON $TOOL auto on     # cover every session on this machine"
 if [ "$OS" = "Darwin" ]; then
   echo "  $PYTHON $TOOL rc on       # restart Remote Control if it dies"
+  echo "  $PYTHON $TOOL obsidian on # reopen the Obsidian app if it quits (optional)"
 fi
 echo "  $PYTHON $TOOL doctor      # confirm it is live"
 echo "  $PYTHON $TOOL notify      # test the alert; prints how to add Pushover keys"

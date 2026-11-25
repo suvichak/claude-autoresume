@@ -15,6 +15,7 @@ claude bin : /Users/suvichak/.local/bin/claude
 launchd : loaded, runs=209 last exit=0
 last sweep : 2026-11-22T10:03:01 (2m ago) OK
 remote ctl : watched, running
+obsidian   : watched, running
 alerts     : this screen only (no Pushover keys in the Keychain)
 auto mode  : True / armed: 1
 maintenance: 2026-11-21T16:09 (install, 0d ago); scheduled task: never ran
@@ -44,6 +45,7 @@ python3 ~/.claude/tools/limit-resume.py arm <sid>    # watch one session, no age
 python3 ~/.claude/tools/limit-resume.py disarm all   # auto mode and rc watch off, nothing watched
 python3 ~/.claude/tools/limit-resume.py disarm <sid> # never resume that session (`arm` undoes it)
 python3 ~/.claude/tools/limit-resume.py rc on|off    # restart Remote Control if it dies
+python3 ~/.claude/tools/limit-resume.py obsidian on|off  # reopen the Obsidian app if it quits (macOS)
 python3 ~/.claude/tools/limit-resume.py notify       # send a test alert (Pushover, else on-screen)
 python3 ~/.claude/tools/limit-resume.py maintain     # weekly maintenance now (probes usage): reset date, tidy, summary
 python3 ~/.claude/tools/limit-resume.py task-spec    # the Claude scheduled task that runs it weekly, as JSON
@@ -343,6 +345,18 @@ PY
 | `3 restarts failed, standing down` | Read the newest `~/.claude/tools/rc-debug/rc-*.log` (`rc-<name>-*.log` for a folder after the first), fix the cause, then `limit-resume.py rc on` (resets every folder). |
 | `running (a server started by hand serves it, pid N; not restarted)` | Nothing. A `claude rc` you started in that folder counts as its server; the watchdog does not stop or replace it. Once it ends, the folder's own server is started again. |
 | `running? (ps or lsof cannot tell; never started blind)` | Check that `ps` and `lsof` work for this user; doctor says NEEDS ATTENTION until they do. |
+
+## Obsidian is closed
+
+`obsidian on` (macOS) makes each sweep check that the Obsidian app is open and
+reopen it in the background (`open -g -a Obsidian`) if it is not, at most once
+per 10 min, with an alert each time. `doctor` says on the `obsidian` line:
+
+| it says | do this |
+|---|---|
+| `CLOSED - reopened by the next sweep` | Nothing. To keep it closed on purpose: `limit-resume.py obsidian off`. |
+| `3 reopens failed, standing down` | Open Obsidian by hand and see why it will not start (moved out of /Applications, renamed?), then `limit-resume.py obsidian on`. |
+| `running? (pgrep cannot tell; never reopened blind)` | Check that `pgrep -x Obsidian` works for this user. |
 
 `cat ~/.claude/tools/rc-last-exit` shows how the last launcher-started server ended (a `kill -9` of the launcher itself leaves the previous entry). Details:
 [[remote-control-autostart]].

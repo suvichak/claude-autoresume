@@ -8,6 +8,7 @@ is the `claude --resume` call itself, once the limit has actually reset.
   limit-resume.py auto on|off                       watch every session
   limit-resume.py sweep                             launchd entry point
   limit-resume.py rc on|off                         keep Remote Control running
+  limit-resume.py obsidian on|off                   keep the Obsidian app open (macOS)
   limit-resume.py status | disarm <id> | disarm all
   limit-resume.py doctor | notify [text]            health check | test alert
   limit-resume.py deadman                           alert once if the sweep has stopped
@@ -51,7 +52,7 @@ import urllib.parse
 import urllib.request
 import uuid as uuidlib
 
-VERSION = "2026-11-23.5"
+VERSION = "2026-11-25.1"
 
 # The Remote Control watchdog reopens its launcher with macOS `open` (Terminal);
 # Linux has no Terminal app to hand it to.
@@ -82,6 +83,9 @@ RC_MAX_TRIES = 3        # consecutive failed starts before standing down
 # app's own sessions are never touched.
 RC_CHILD_MARK = "--sdk-url https://api.anthropic.com/v1/code/sessions/"
 REAP_GRACE = 5          # seconds between SIGTERM and SIGKILL
+OBS_APP = "Obsidian"    # the app `obsidian on` keeps open; LiveSync only syncs while it runs
+OBS_MIN_INTERVAL = 600  # never reopen it more than once per 10 min
+OBS_MAX_TRIES = 3       # reopens in a row that leave it closed, then stand down
 # A Claude Code update leaves the running server on its old binary. It is only
 # replaced once its sessions have been quiet this long, so no turn is cut off.
 RC_IDLE = 600           # seconds without session traffic in the server's debug log
@@ -580,6 +584,24 @@ def cmd_rc(argv):
 
 
 @with_state_lock
+def cmd_obsidian(argv):
+    if not argv or argv[0] not in ("on", "off"):
+        print("usage: limit-resume.py obsidian on|off")
+        return 2
+    if argv[0] == "on" and not IS_MAC:
+        print("Obsidian watching is macOS only: it reopens the app with `open -a`.")
+        return 2
+    state = load_state()
+    cfg = state.setdefault(CONFIG, {})
+    cfg["obsidian_watch"] = (argv[0] == "on")
+    for key in OBS_FLAGS:                 # a fresh `obsidian on` resets the breaker
+        cfg.pop(key, None)
+    save_state(state)
+    log("Obsidian watchdog %s (running now: %s)" % (argv[0], obsidian_running()))
+    return 0
+
+
+@with_state_lock
 def cmd_disarm(argv):
     """disarm <sid>: never resume that session again (`arm` undoes it).
     disarm all: auto mode and the Remote Control watch off, and every armed
@@ -591,6 +613,7 @@ def cmd_disarm(argv):
         cfg = state.setdefault(CONFIG, {})
         cfg["auto_all"] = False
         cfg["rc_watch"] = False           # uninstall.sh relies on this
+        cfg["obsidian_watch"] = False
         for sid in sessions(state):
             state[sid]["origin"] = "auto"
     elif argv:
@@ -1219,6 +1242,57 @@ def rc_watch_folder(cfg, folder):
         subprocess.run(["open", folder["launcher"]], capture_output=True, timeout=30)
     except Exception as exc:
         log("  failed to launch: %s" % exc)
+    return True
+
+
+OBS_FLAGS = ("obs_tries", "obs_last_launch", "obs_trip_alerted")
+
+
+def obsidian_running():
+    """Is the Obsidian app open? None when pgrep cannot tell (never reopened blind)."""
+    try:
+        code = subprocess.run(["pgrep", "-x", OBS_APP], capture_output=True,
+                              timeout=20).returncode
+    except Exception:
+        return None
+    return {0: True, 1: False}.get(code)
+
+
+def obsidian_watchdog(state):
+    """Reopen Obsidian if it has quit. Opt-in via `obsidian on`. True if it was opened."""
+    cfg = state.setdefault(CONFIG, {})
+    if not cfg.get("obsidian_watch") or not IS_MAC:
+        return False
+    up = obsidian_running()
+    if up is None:
+        return False
+    if up:
+        if cfg.pop("obs_tries", None):
+            log("obsidian watchdog: Obsidian is open")
+        cfg.pop("obs_trip_alerted", None)
+        return False
+    now = time.time()
+    if 0 <= now - cfg.get("obs_last_launch", 0) < OBS_MIN_INTERVAL:
+        return False                      # reopened recently, give it time
+    if cfg.get("obs_tries", 0) >= OBS_MAX_TRIES:
+        if not cfg.get("obs_trip_alerted"):
+            cfg["obs_trip_alerted"] = notify(
+                "Obsidian is closed and %d reopens failed. Standing down; open it by "
+                "hand, then `limit-resume.py obsidian on`." % OBS_MAX_TRIES) != "retry"
+        return False                      # standing down; `obsidian on` resets it
+    cfg["obs_last_launch"] = now
+    cfg["obs_tries"] = cfg.get("obs_tries", 0) + 1
+    log("obsidian watchdog: Obsidian is not running, opening it (try %d/%d)"
+        % (cfg["obs_tries"], OBS_MAX_TRIES))
+    try:
+        # -g: open in the background, without taking focus from the user's window.
+        proc = subprocess.run(["open", "-g", "-a", OBS_APP], capture_output=True,
+                              text=True, timeout=30)
+        if proc.returncode:
+            log("  open failed: %s" % (proc.stderr or "").strip())
+    except Exception as exc:
+        log("  failed to open: %s" % exc)
+    notify("Obsidian had quit; reopened it (try %d/%d)." % (cfg["obs_tries"], OBS_MAX_TRIES))
     return True
 
 
@@ -4392,6 +4466,11 @@ def sweep(state):
         # A watchdog fault must not stop the heartbeat, jobs or resumes.
         import traceback
         log("rc watchdog: CRASH:\n%s" % traceback.format_exc())
+    try:
+        obsidian_watchdog(state)           # keep the vault app (and its sync) open
+    except Exception:
+        import traceback
+        log("obsidian watchdog: CRASH:\n%s" % traceback.format_exc())
     save_state(state)                      # heartbeat, proves the agent is alive
     migrate_legacy_jobs(state)
     # One task at a time: a chat resume first, then `priority: top` jobs, then
@@ -4797,6 +4876,20 @@ def cmd_doctor(_argv):
                                    else "this screen only (no Pushover keys in the Keychain)"))
     else:
         print("remote ctl : not watched (`rc on` to enable)")
+    if IS_MAC and cfg.get("obsidian_watch"):
+        up = obsidian_running()
+        if up:
+            print("obsidian   : watched, running")
+        elif up is None:
+            print("obsidian   : watched, running? (pgrep cannot tell; never reopened blind)")
+        elif cfg.get("obs_tries", 0) >= OBS_MAX_TRIES:
+            print("obsidian   : watched, DOWN - %d reopens failed, standing down "
+                  "(`obsidian on` to retry)" % OBS_MAX_TRIES)
+        else:
+            print("obsidian   : watched, CLOSED - reopened by the next sweep")
+        ok = ok and up is not False
+    elif IS_MAC:
+        print("obsidian   : not watched (`obsidian on` to enable)")
     by_auto = sum(state[sid].get("origin") == "auto" for sid in sessions(state))
     print("auto mode  : %s / armed: %d explicit, %d by auto mode"
           % (auto_on(state), len(sessions(state)) - by_auto, by_auto))
@@ -4835,7 +4928,7 @@ def cmd_doctor(_argv):
 
 COMMANDS = {"arm": cmd_arm, "auto": cmd_auto, "sweep": cmd_sweep,
             "status": cmd_status, "disarm": cmd_disarm, "doctor": cmd_doctor,
-            "rc": cmd_rc, "notify": cmd_notify, "jobs": cmd_jobs,
+            "rc": cmd_rc, "obsidian": cmd_obsidian, "notify": cmd_notify, "jobs": cmd_jobs,
             "statusline": cmd_statusline, "guard": cmd_guard, "jobpty": cmd_jobpty,
             "maintain": cmd_maintain, "task-spec": cmd_task_spec, "task-setup": cmd_task_setup,
             "deadman": cmd_deadman, "reload-check": cmd_reload_check,
