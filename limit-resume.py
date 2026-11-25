@@ -888,6 +888,9 @@ def cmd_notify(argv):
     print("sent via %s" % how)
     if how == "retry":
         print("Pushover keys found but the post failed - see the log")
+    elif how != "pushover" and not IS_MAC:
+        print("Pushover is macOS-only (keys live in the Keychain); here alerts go to the"
+              " desktop (notify-send) and the log")
     elif how != "pushover":
         print("No Pushover keys - add them to the Keychain:")
         for account in ("token", "user"):

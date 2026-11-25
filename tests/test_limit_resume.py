@@ -879,6 +879,12 @@ def _rc_watchdog_scenarios():
     check("Linux: no keys -> local notification", lr.notify("hello"), "local")
     check("Linux: notify-send used, message as its own argument",
           (calls[-1][0], calls[-1][-1]), ("notify-send", "hello"))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        lr.cmd_notify(["hi"])
+    check("Linux: `notify` does not suggest the macOS Keychain",
+          ("security add-generic-password" in buf.getvalue(), "macOS-only" in buf.getvalue()),
+          (False, True))
     lr.IS_MAC = True
     check("always logged", "ALERT: hello" in open(lr.LOG).read(), True)
     lr.subprocess.run = fake_run(calls=calls, keys={"token": "T0K", "user": "US3R"})
