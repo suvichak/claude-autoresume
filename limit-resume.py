@@ -52,7 +52,7 @@ import urllib.parse
 import urllib.request
 import uuid as uuidlib
 
-VERSION = "2026-11-25.1"
+VERSION = "2026-11-25.2"
 
 # The Remote Control watchdog reopens its launcher with macOS `open` (Terminal);
 # Linux has no Terminal app to hand it to.
@@ -851,8 +851,8 @@ def keychain(account):
 def notify(msg):
     """Tell a human. Returns the channel used: pushover, local, log or retry.
 
-    Pushover when its keys are in the Keychain, otherwise a notification on this
-    machine's own screen. `retry` means Pushover is set up but the post failed,
+    Pushover when its keys are in the Keychain (macOS), otherwise a notification
+    on this machine's own screen: osascript on macOS, notify-send on Linux. `retry` means Pushover is set up but the post failed,
     so the caller should send it again later. Never raises - an alert must not
     break the sweep.
     """
@@ -868,10 +868,13 @@ def notify(msg):
             return "pushover"
         except Exception as exc:
             log("  pushover failed: %s" % exc)
+    if IS_MAC:
+        screen = ["osascript", "-e", "display notification %s with title %s"
+                  % (json.dumps(msg), json.dumps("Claude watchdog"))]
+    else:                       # Linux desktop (libnotify); fails harmlessly without one
+        screen = ["notify-send", "--app-name=limit-resume", "Claude watchdog", msg]
     try:
-        proc = subprocess.run(["osascript", "-e", "display notification %s with title %s"
-                               % (json.dumps(msg), json.dumps("Claude watchdog"))],
-                              capture_output=True, timeout=20)
+        proc = subprocess.run(screen, capture_output=True, timeout=20)
         shown = proc.returncode == 0
     except Exception:
         shown = False
@@ -2939,7 +2942,7 @@ def runner_name():
     """This machine, as written into the `runner:` of the notes it runs: on
     macOS the LocalHostName, which does not change with the network the way
     the DHCP-given host name can; else the short host name."""
-    if sys.platform == "darwin":
+    if IS_MAC:
         try:
             name = subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True,
                                   text=True, timeout=10).stdout.strip()
@@ -4590,7 +4593,7 @@ def scheduler_status():
     pended: launchd is holding the agent back ("pended nondemand spawn"). That
     is how it looked, loaded all along, through the ~35 h without a sweep on
     2026-11-20/21. Only a stale sweep makes it a fault (doctor)."""
-    if sys.platform == "darwin":
+    if IS_MAC:
         unit = os.path.join(HOME, "Library", "LaunchAgents", LABEL + ".plist")
         if not os.path.exists(unit):
             return "launchd : plist MISSING - run install.sh", False, False
@@ -4645,7 +4648,7 @@ def beat_age(cfg):
 
 def kickstart_hint():
     """The command that runs one sweep now, outside the schedule."""
-    if sys.platform == "darwin":
+    if IS_MAC:
         return "launchctl kickstart gui/%d/%s" % (os.getuid(), LABEL)
     return "systemctl --user start %s.service" % LABEL
 

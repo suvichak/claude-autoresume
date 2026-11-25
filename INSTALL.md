@@ -10,7 +10,7 @@ credentials.
 | OS | Support |
 |---|---|
 | macOS | Everything: resumes, Remote Control watchdog and Login Items, background jobs, weekly check-up |
-| Linux | Resumes (systemd user timer), background jobs, weekly check-up. No Remote Control watchdog: it reopens the launcher with macOS `open`, so `rc on` refuses there |
+| Linux | Resumes (systemd user timer), background jobs, weekly check-up, alerts with `notify-send`. No Remote Control watchdog: it reopens the launcher with macOS `open`, so `rc on` refuses there. The test suite runs on both |
 | Windows | **Not supported.** `install.sh` refuses: the tool needs `fcntl`, a pty, `ps`/`lsof` and launchd or systemd |
 
 ## Install with Claude Code
